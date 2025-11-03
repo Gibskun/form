@@ -159,6 +159,13 @@ const AdminDashboard = () => {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <Link
+                          to={`/admin/edit-form/${form.id}`}
+                          className="btn btn-primary"
+                          style={{ fontSize: '12px', padding: '5px 10px', textDecoration: 'none' }}
+                        >
+                          Edit
+                        </Link>
                         <CopyLinkButton 
                           uniqueLink={form.unique_link}
                           formTitle={form.title}

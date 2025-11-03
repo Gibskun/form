@@ -27,7 +27,9 @@ export const authAPI = {
 // Admin API
 export const adminAPI = {
   getForms: () => api.get('/api/admin/forms'),
+  getForm: (formId) => api.get(`/api/admin/forms/${formId}`),
   createForm: (formData) => api.post('/api/admin/forms', formData),
+  updateForm: (formId, formData) => api.put(`/api/admin/forms/${formId}`, formData),
   deleteForm: (formId) => api.delete(`/api/admin/forms/${formId}`),
   getFormResponses: (formId) => api.get(`/api/admin/forms/${formId}/responses`),
   exportFormResponses: (formId) => {

@@ -128,32 +128,44 @@ app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =
 
     const formId = formResult.rows[0].id;
 
-    // Insert questions
+    // Insert questions and create ID mapping
+    const questionIdMap = {}; // Maps frontend ID to database ID
     if (questions && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
-        await pool.query(`
+        const questionResult = await pool.query(`
           INSERT INTO form_questions 
           (form_id, question_text, question_text_id, question_type, options, 
            left_statement, right_statement, left_statement_id, right_statement_id, 
            is_required, order_number)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          RETURNING id
         `, [
           formId, q.question_text, q.question_text_id, q.question_type,
           q.options ? JSON.stringify(q.options) : null,
           q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
           q.is_required, i + 1
         ]);
+        
+        // Map frontend ID to database ID
+        if (q.id) {
+          questionIdMap[q.id] = questionResult.rows[0].id;
+        }
       }
     }
 
-    // Insert conditional questions
+    // Insert conditional questions with mapped IDs
     if (conditionalQuestions && conditionalQuestions.length > 0) {
       for (const cq of conditionalQuestions) {
+        // Map frontend question IDs to database IDs
+        const mappedQuestionIds = cq.question_ids.map(frontendId => {
+          return questionIdMap[frontendId] || frontendId;
+        });
+        
         await pool.query(`
           INSERT INTO conditional_questions (form_id, condition_type, condition_value, question_ids)
           VALUES ($1, $2, $3, $4)
-        `, [formId, cq.condition_type, cq.condition_value, cq.question_ids]);
+        `, [formId, cq.condition_type, cq.condition_value, mappedQuestionIds]);
       }
     }
 
@@ -163,6 +175,126 @@ app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =
     });
   } catch (error) {
     console.error('Create form error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get single form for editing (admin)
+app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { formId } = req.params;
+
+    // Get form details
+    const formResult = await pool.query(`
+      SELECT * FROM forms WHERE id = $1
+    `, [formId]);
+
+    if (formResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Form not found' });
+    }
+
+    const form = formResult.rows[0];
+
+    // Get questions
+    const questionsResult = await pool.query(`
+      SELECT * FROM form_questions 
+      WHERE form_id = $1 
+      ORDER BY order_number
+    `, [form.id]);
+
+    // Get conditional questions
+    const conditionalResult = await pool.query(`
+      SELECT * FROM conditional_questions WHERE form_id = $1
+    `, [form.id]);
+
+    res.json({
+      ...form,
+      questions: questionsResult.rows.map(q => ({
+        ...q,
+        options: q.options || null
+      })),
+      conditional_questions: conditionalResult.rows
+    });
+  } catch (error) {
+    console.error('Get form error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update form (admin)
+app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { formId } = req.params;
+    const { title, description, form_type, questions, conditionalQuestions } = req.body;
+
+    // Check if form exists and user owns it (or is admin)
+    const formCheck = await pool.query(`
+      SELECT * FROM forms WHERE id = $1
+    `, [formId]);
+
+    if (formCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Form not found' });
+    }
+
+    // Update form details
+    const formResult = await pool.query(`
+      UPDATE forms 
+      SET title = $1, description = $2, form_type = $3, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4
+      RETURNING *
+    `, [title, description, form_type, formId]);
+
+    // Delete existing questions and conditional questions
+    await pool.query('DELETE FROM form_questions WHERE form_id = $1', [formId]);
+    await pool.query('DELETE FROM conditional_questions WHERE form_id = $1', [formId]);
+
+    // Insert updated questions and create ID mapping
+    const questionIdMap = {}; // Maps frontend ID to database ID
+    if (questions && questions.length > 0) {
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        const questionResult = await pool.query(`
+          INSERT INTO form_questions 
+          (form_id, question_text, question_text_id, question_type, options, 
+           left_statement, right_statement, left_statement_id, right_statement_id, 
+           is_required, order_number)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          RETURNING id
+        `, [
+          formId, q.question_text, q.question_text_id, q.question_type,
+          q.options ? JSON.stringify(q.options) : null,
+          q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
+          q.is_required, i + 1
+        ]);
+        
+        // Map frontend ID to database ID
+        if (q.id) {
+          questionIdMap[q.id] = questionResult.rows[0].id;
+        }
+      }
+    }
+
+    // Insert updated conditional questions with mapped IDs
+    if (conditionalQuestions && conditionalQuestions.length > 0) {
+      for (const cq of conditionalQuestions) {
+        // Map frontend question IDs to database IDs
+        const mappedQuestionIds = cq.question_ids.map(frontendId => {
+          return questionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO conditional_questions (form_id, condition_type, condition_value, question_ids)
+          VALUES ($1, $2, $3, $4)
+        `, [formId, cq.condition_type, cq.condition_value, mappedQuestionIds]);
+      }
+    }
+
+    res.json({
+      ...formResult.rows[0],
+      message: 'Form updated successfully'
+    });
+  } catch (error) {
+    console.error('Update form error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -396,17 +528,51 @@ app.post('/api/form/:uniqueLink/conditional-questions', async (req, res) => {
     const formId = formResult.rows[0].id;
 
     // Get conditional questions for this year
+    const yearInt = parseInt(selectedYear);
+    
+    // First get all conditional questions for this form
     const conditionalResult = await pool.query(`
       SELECT * FROM conditional_questions 
-      WHERE form_id = $1 AND (
-        (condition_type = 'year_equals' AND condition_value = $2) OR
-        (condition_type = 'year_less_equal' AND $3 <= CAST(condition_value AS INTEGER))
-      )
-    `, [formId, selectedYear, parseInt(selectedYear)]);
+      WHERE form_id = $1 AND is_active = true
+    `, [formId]);
 
-    // Get all question IDs to show
+    // Filter based on conditions in JavaScript to handle JSONB properly
+    const matchingConditions = conditionalResult.rows.filter(row => {
+      const conditionValue = row.condition_value;
+      
+      try {
+        switch (row.condition_type) {
+          case 'year_equals':
+            const targetYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+            return yearInt === targetYear;
+            
+          case 'year_less_equal':
+            const maxYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+            return yearInt <= maxYear;
+            
+          case 'year_greater_equal':
+            const minYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+            return yearInt >= minYear;
+            
+          case 'year_between':
+            if (typeof conditionValue === 'string' && conditionValue.includes('-')) {
+              const [startYear, endYear] = conditionValue.split('-').map(y => parseInt(y.trim()));
+              return yearInt >= startYear && yearInt <= endYear;
+            }
+            return false;
+            
+          default:
+            return false;
+        }
+      } catch (error) {
+        console.error(`Error processing condition for row ${row.id}:`, error);
+        return false;
+      }
+    });
+
+    // Get all question IDs to show from matching conditions
     let questionIdsToShow = [];
-    conditionalResult.rows.forEach(row => {
+    matchingConditions.forEach(row => {
       questionIdsToShow = [...questionIdsToShow, ...row.question_ids];
     });
 
@@ -445,7 +611,7 @@ const startServer = async () => {
     // Test database connection
     await testConnection();
     
-    // Initialize database (drop and recreate tables)
+    // Initialize database (check and create tables if needed)
     await initializeDatabase();
     
     app.listen(PORT, () => {

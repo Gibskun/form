@@ -23,6 +23,7 @@ function App() {
             <Route path="/admin" element={<AdminLogin />} />
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
             <Route path="/admin/create-form" element={<FormBuilder />} />
+            <Route path="/admin/edit-form/:formId" element={<FormBuilder />} />
             <Route path="/admin/forms/:formId/responses" element={<FormResponses />} />
             <Route path="/form/:uniqueLink" element={<FormFiller />} />
           </Routes>
