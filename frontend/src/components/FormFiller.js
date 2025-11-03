@@ -116,12 +116,23 @@ const FormFiller = () => {
         throw new Error('Please select your year of entry before submitting the form');
       }
 
-      // Validate required questions
-      const allQuestions = [...form.questions, ...conditionalQuestions];
-      const requiredQuestions = allQuestions.filter(q => q.is_required);
-      
+      // Validate required questions — only validate visible questions (those shown to the user)
+      const visibleQuestions = getQuestionsToShow();
+      const requiredQuestions = visibleQuestions.filter(q => q.is_required);
+
       for (const question of requiredQuestions) {
-        if (!responses[question.id]) {
+        const val = responses[question.id];
+
+        // Handle checkbox (array) specially
+        if (question.question_type === 'checkbox') {
+          if (!Array.isArray(val) || val.length === 0) {
+            throw new Error(`Please answer: ${question.question_text}`);
+          }
+          continue;
+        }
+
+        // For other types, treat null/undefined/empty-string as unanswered
+        if (val === null || val === undefined || val === '') {
           throw new Error(`Please answer: ${question.question_text}`);
         }
       }
@@ -293,7 +304,6 @@ const FormFiller = () => {
                     color: '#495057',
                     marginBottom: '8px'
                   }}>
-                    Left Statement (1-2):
                   </div>
                   <div style={{ 
                     fontSize: '15px',
@@ -346,7 +356,6 @@ const FormFiller = () => {
                     color: '#495057',
                     marginBottom: '8px'
                   }}>
-                    Right Statement (3-4):
                   </div>
                   <div style={{ 
                     fontSize: '15px',
@@ -377,7 +386,6 @@ const FormFiller = () => {
                 color: '#6c757d',
                 fontStyle: 'italic'
               }}>
-                Select 1-2 if you lean towards the left statement, or 3-4 if you lean towards the right statement
               </div>
             </div>
           </div>
