@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { adminAPI } from '../utils/api';
 import CopyLinkButton from './CopyLinkButton';
+import SuperadminPasswordChange from './SuperadminPasswordChange';
 
 const AdminDashboard = () => {
   const [forms, setForms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -15,6 +18,17 @@ const AdminDashboard = () => {
     if (!token) {
       navigate('/admin');
       return;
+    }
+
+    // Check if user is superadmin
+    const adminUser = localStorage.getItem('adminUser');
+    if (adminUser) {
+      try {
+        const user = JSON.parse(adminUser);
+        setIsSuperAdmin(user.role === 'super_admin');
+      } catch (error) {
+        console.error('Error parsing admin user:', error);
+      }
     }
 
     fetchForms();
@@ -80,9 +94,36 @@ const AdminDashboard = () => {
     <div>
       <header className="header">
         <nav className="nav">
-          <h1>Form System - Admin Dashboard</h1>
+          <h1>
+            Form System - Admin Dashboard
+            {isSuperAdmin && (
+              <span style={{
+                fontSize: '14px',
+                backgroundColor: '#e74c3c',
+                color: 'white',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                marginLeft: '10px'
+              }}>
+                SUPERADMIN
+              </span>
+            )}
+          </h1>
           <div className="nav-links">
             <Link to="/admin/create-form" className="nav-link">Create New Form</Link>
+            {isSuperAdmin && (
+              <button 
+                onClick={() => setShowPasswordChange(true)} 
+                className="btn"
+                style={{ 
+                  backgroundColor: '#e74c3c', 
+                  color: 'white',
+                  border: '1px solid #e74c3c'
+                }}
+              >
+                🔐 Change Password
+              </button>
+            )}
             <button onClick={handleLogout} className="btn btn-secondary">Logout</button>
           </div>
         </nav>
@@ -198,6 +239,13 @@ const AdminDashboard = () => {
           )}
         </div>
       </div>
+
+      {/* Superadmin Password Change Modal */}
+      {showPasswordChange && (
+        <SuperadminPasswordChange
+          onClose={() => setShowPasswordChange(false)}
+        />
+      )}
     </div>
   );
 };

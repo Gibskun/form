@@ -28,6 +28,13 @@ const FormFiller = () => {
   const fetchForm = async () => {
     try {
       const response = await formAPI.getForm(uniqueLink);
+      console.log('🔍 FormFiller received form data:', response.data);
+      console.log('📋 Assessment questions with scale_order:');
+      response.data.questions.forEach(q => {
+        if (q.question_type === 'assessment') {
+          console.log(`Q${q.id}: ${q.question_text} - scale_order:`, q.scale_order);
+        }
+      });
       setForm(response.data);
     } catch (error) {
       setError(error.response?.data?.error || 'Form not found');
@@ -327,7 +334,7 @@ const FormFiller = () => {
 
                 {/* Rating Scale */}
                 <div className="assessment-rating-container">
-                  {[1, 2, 3, 4].map(rating => (
+                  {(question.scale_order || [1, 2, 3, 4, 5]).map(rating => (
                     <div key={rating} className="assessment-rating-item">
                       <input
                         type="radio"
@@ -342,7 +349,7 @@ const FormFiller = () => {
                         htmlFor={`${question.id}_${rating}`}
                         className="assessment-rating-label"
                       >
-                        {rating}
+                        {/* Number hidden for cleaner UI */}
                       </label>
                     </div>
                   ))}
@@ -595,7 +602,6 @@ const FormFiller = () => {
                 <div className="form-section">
                   <div className="form-group">
                     <label className="form-label">
-                      <span style={{ marginRight: '5px' }}>1.</span>
                       What year did you enter/join?
                       <span style={{ color: '#dc3545', marginLeft: '5px' }}>*</span>
                     </label>
@@ -712,7 +718,6 @@ const FormFiller = () => {
                     <div key={question.id} className="form-section">
                       <div className="form-group">
                         <label className="form-label">
-                          <span style={{ marginRight: '5px' }}>{index + 2}.</span>
                           {form.form_type === 'assessment' ? (
                             <div>
                               <div style={{ marginBottom: '3px' }}>

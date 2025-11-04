@@ -413,7 +413,7 @@ const initializeDatabase = async () => {
       ('select', 'Dropdown', 'Single selection dropdown', true, true),
       ('radio', 'Multiple Choice', 'Single selection from options', true, true),
       ('checkbox', 'Checkboxes', 'Multiple selection from options', true, true),
-      ('assessment', 'Assessment Scale', '4-point Likert scale for assessments', true, true),
+      ('assessment', 'Assessment Scale', '5-point Likert scale for assessments', true, true),
       ('file', 'File Upload', 'File attachment upload', false, false),
       ('date', 'Date', 'Date picker input', false, true),
       ('time', 'Time', 'Time picker input', false, true),
@@ -457,7 +457,27 @@ const initializeDatabase = async () => {
       ON CONFLICT (username) DO NOTHING
     `, [adminPassword]);
 
+    // Create superadmin user
+    const superAdminPassword = await bcrypt.hash('superadmin123', 10);
+    await pool.query(`
+      INSERT INTO users (username, email, password_hash, role, first_name, last_name)
+      VALUES ('superadmin', 'superadmin@example.com', $1, 'super_admin', 'Super', 'Administrator')
+      ON CONFLICT (username) DO NOTHING
+    `, [superAdminPassword]);
+
     console.log('✅ Default admin user created (username: admin, password: admin123)');
+    console.log('✅ Default superadmin user created (username: superadmin, password: superadmin123)');
+
+    // Add scale_order column to form_questions if it doesn't exist
+    try {
+      await pool.query(`
+        ALTER TABLE form_questions 
+        ADD COLUMN IF NOT EXISTS scale_order JSONB DEFAULT '[1,2,3,4,5]'
+      `);
+      console.log('✅ Added scale_order column to form_questions table');
+    } catch (err) {
+      console.log('ℹ️  scale_order column already exists or error:', err.message);
+    }
 
   } catch (err) {
     console.error('❌ Database initialization error:', err.message);
@@ -496,6 +516,17 @@ const ensureSchemaUpdates = async () => {
     
     // Ensure default data exists
     await ensureDefaultData();
+    
+    // Add scale_order column to form_questions if it doesn't exist
+    try {
+      await pool.query(`
+        ALTER TABLE form_questions 
+        ADD COLUMN IF NOT EXISTS scale_order JSONB DEFAULT '[1,2,3,4,5]'
+      `);
+      console.log('✅ Added scale_order column to form_questions table');
+    } catch (err) {
+      console.log('ℹ️  scale_order column already exists or error:', err.message);
+    }
     
     console.log('✅ Schema updates completed');
     
@@ -565,9 +596,29 @@ const ensureDefaultAdmin = async () => {
         VALUES ('admin', 'admin@example.com', $1, 'admin', 'System', 'Administrator')
         ON CONFLICT (username) DO NOTHING
       `, [adminPassword]);
+      
       console.log('✅ Default admin user created (username: admin, password: admin123)');
     } else {
       console.log('👤 Admin user already exists');
+    }
+    
+    // Check if superadmin user exists (separate check)
+    const superAdminCheck = await pool.query(`
+      SELECT id FROM users WHERE username = 'superadmin' AND role = 'super_admin'
+    `);
+    
+    if (superAdminCheck.rows.length === 0) {
+      console.log('👤 Creating default superadmin user...');
+      const superAdminPassword = await bcrypt.hash('superadmin123', 10);
+      await pool.query(`
+        INSERT INTO users (username, email, password_hash, role, first_name, last_name)
+        VALUES ('superadmin', 'superadmin@example.com', $1, 'super_admin', 'Super', 'Administrator')
+        ON CONFLICT (username) DO NOTHING
+      `, [superAdminPassword]);
+      
+      console.log('✅ Default superadmin user created (username: superadmin, password: superadmin123)');
+    } else {
+      console.log('👤 Superadmin user already exists');
     }
   } catch (err) {
     console.log('⚠️  Admin user check warning:', err.message);
@@ -587,7 +638,7 @@ const ensureDefaultData = async () => {
       ('select', 'Dropdown', 'Single selection dropdown', true, true),
       ('radio', 'Multiple Choice', 'Single selection from options', true, true),
       ('checkbox', 'Checkboxes', 'Multiple selection from options', true, true),
-      ('assessment', 'Assessment Scale', '4-point Likert scale for assessments', true, true)
+      ('assessment', 'Assessment Scale', '5-point Likert scale for assessments', true, true)
       ON CONFLICT (type_name) DO NOTHING
     `);
     

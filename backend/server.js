@@ -44,8 +44,16 @@ const authenticateToken = (req, res, next) => {
 
 // Admin middleware
 const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
+  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+};
+
+// Super Admin middleware
+const requireSuperAdmin = (req, res, next) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Super Admin access required' });
   }
   next();
 };
@@ -58,8 +66,8 @@ app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
 
     const result = await pool.query(
-      'SELECT * FROM users WHERE username = $1 AND role = $2',
-      [username, 'admin']
+      'SELECT * FROM users WHERE username = $1 AND (role = $2 OR role = $3)',
+      [username, 'admin', 'super_admin']
     );
 
     if (result.rows.length === 0) {
@@ -89,6 +97,53 @@ app.post('/api/admin/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Change password (superadmin only)
+app.post('/api/superadmin/change-password', authenticateToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.id;
+
+    // Validate input
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+    }
+
+    // Get current user data
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Verify current password
+    const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!validPassword) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+    // Update password in database
+    await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newPasswordHash, userId]
+    );
+
+    console.log(`🔐 Superadmin ${user.username} changed password successfully`);
+    
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -244,6 +299,15 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       RETURNING *
     `, [title, description, form_type, formId]);
 
+    // Get existing questions to preserve scale_order
+    const existingQuestions = await pool.query(`
+      SELECT id, scale_order FROM form_questions WHERE form_id = $1
+    `, [formId]);
+    const existingScaleOrders = {};
+    existingQuestions.rows.forEach(row => {
+      existingScaleOrders[row.id] = row.scale_order;
+    });
+
     // Delete existing questions and conditional questions
     await pool.query('DELETE FROM form_questions WHERE form_id = $1', [formId]);
     await pool.query('DELETE FROM conditional_questions WHERE form_id = $1', [formId]);
@@ -253,18 +317,25 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
     if (questions && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
+        
+        // Preserve existing scale_order if this is an assessment question
+        let scaleOrder = null;
+        if (q.question_type === 'assessment') {
+          scaleOrder = existingScaleOrders[q.id] || [1, 2, 3, 4, 5];
+        }
+        
         const questionResult = await pool.query(`
           INSERT INTO form_questions 
           (form_id, question_text, question_text_id, question_type, options, 
            left_statement, right_statement, left_statement_id, right_statement_id, 
-           is_required, order_number)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           is_required, order_number, scale_order)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING id
         `, [
           formId, q.question_text, q.question_text_id, q.question_type,
           q.options ? JSON.stringify(q.options) : null,
           q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
-          q.is_required, i + 1
+          q.is_required, i + 1, scaleOrder ? JSON.stringify(scaleOrder) : null
         ]);
         
         // Map frontend ID to database ID
@@ -393,6 +464,15 @@ app.get('/api/admin/forms/:formId/responses', authenticateToken, requireAdmin, a
   try {
     const { formId } = req.params;
 
+    // Get form questions for mapping
+    const questionsResult = await pool.query(`
+      SELECT * FROM form_questions 
+      WHERE form_id = $1 
+      ORDER BY order_number
+    `, [formId]);
+    const questions = questionsResult.rows;
+
+    // Get responses
     const result = await pool.query(`
       SELECT * FROM form_responses 
       WHERE form_id = $1 
@@ -401,7 +481,8 @@ app.get('/api/admin/forms/:formId/responses', authenticateToken, requireAdmin, a
 
     const responses = result.rows.map(row => ({
       ...row,
-      responses: row.responses
+      responses: row.responses,
+      questions: questions // Include questions for frontend mapping
     }));
 
     res.json(responses);
@@ -601,6 +682,123 @@ app.post('/api/form/:uniqueLink/conditional-questions', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// ==================== SUPERADMIN ROUTES ====================
+
+// Get scale order for a specific question (superadmin)
+app.get('/api/superadmin/forms/:formId/questions/:questionId/scale-order', 
+  authenticateToken, 
+  requireSuperAdmin, 
+  async (req, res) => {
+    try {
+      const { formId, questionId } = req.params;
+      
+      const result = await pool.query(
+        'SELECT scale_order FROM form_questions WHERE form_id = $1 AND id = $2 AND question_type = $3',
+        [formId, questionId, 'assessment']
+      );
+      
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Assessment question not found' });
+      }
+      
+      const scaleOrder = result.rows[0].scale_order || [1, 2, 3, 4, 5];
+      res.json({ scaleOrder });
+      
+    } catch (error) {
+      console.error('Get scale order error:', error);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// Update scale order for a specific question (superadmin)
+app.put('/api/superadmin/forms/:formId/questions/:questionId/scale-order', 
+  authenticateToken, 
+  requireSuperAdmin, 
+  async (req, res) => {
+    try {
+      const { formId, questionId } = req.params;
+      const { scaleOrder } = req.body;
+      
+      // Validate scale order
+      if (!Array.isArray(scaleOrder) || scaleOrder.length !== 5) {
+        return res.status(400).json({ error: 'Scale order must be an array of 5 numbers' });
+      }
+      
+      const validNumbers = [1, 2, 3, 4, 5];
+      const isValidOrder = scaleOrder.every(num => validNumbers.includes(num)) &&
+                          new Set(scaleOrder).size === 5;
+                          
+      if (!isValidOrder) {
+        return res.status(400).json({ error: 'Scale order must contain each number 1-5 exactly once' });
+      }
+      
+      // Check if question exists and is assessment type
+      const checkResult = await pool.query(
+        'SELECT id FROM form_questions WHERE form_id = $1 AND id = $2 AND question_type = $3',
+        [formId, questionId, 'assessment']
+      );
+      
+      if (checkResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Assessment question not found' });
+      }
+      
+      // Update scale order
+      await pool.query(
+        'UPDATE form_questions SET scale_order = $1 WHERE form_id = $2 AND id = $3',
+        [JSON.stringify(scaleOrder), formId, questionId]
+      );
+      
+      res.json({ message: 'Scale order updated successfully', scaleOrder });
+      
+    } catch (error) {
+      console.error('Update scale order error:', error);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// Get all assessment questions for a form with their scale orders (superadmin)
+app.get('/api/superadmin/forms/:formId/assessment-questions', 
+  authenticateToken, 
+  requireSuperAdmin, 
+  async (req, res) => {
+    try {
+      const { formId } = req.params;
+      console.log(`🔧 Superadmin requesting assessment questions for form ${formId} by user:`, req.user);
+      
+      const result = await pool.query(`
+        SELECT 
+          id,
+          question_text,
+          question_text_id,
+          scale_order,
+          order_number
+        FROM form_questions 
+        WHERE form_id = $1 AND question_type = 'assessment'
+        ORDER BY order_number
+      `, [formId]);
+      
+      console.log(`📋 Found ${result.rows.length} assessment questions for form ${formId}`);
+      
+      const questions = result.rows.map(row => ({
+        id: row.id,
+        questionTextEn: row.question_text,
+        questionTextAr: row.question_text_id || '', // Using text_id as placeholder for Arabic
+        scaleOrder: row.scale_order || [1, 2, 3, 4, 5],
+        questionOrder: row.order_number
+      }));
+      
+      console.log(`✅ Returning ${questions.length} transformed questions`);
+      res.json({ questions });
+      
+    } catch (error) {
+      console.error('Get assessment questions error:', error);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
 
 // ==================== SERVER STARTUP ====================
 

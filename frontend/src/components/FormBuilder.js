@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { adminAPI } from '../utils/api';
+import { adminAPI, superadminAPI } from '../utils/api';
 
 const FormBuilder = () => {
   const { formId } = useParams(); // Get formId from URL if editing
@@ -18,6 +18,9 @@ const FormBuilder = () => {
   const [error, setError] = useState('');
   const [collapsedQuestions, setCollapsedQuestions] = useState(new Set());
   const [previewMode, setPreviewMode] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [scaleOrderMode, setScaleOrderMode] = useState(false);
+  const [assessmentQuestions, setAssessmentQuestions] = useState([]);
   const navigate = useNavigate();
 
   // Check authentication on component mount
@@ -38,6 +41,19 @@ const FormBuilder = () => {
       console.log('🆕 Create mode detected');
     }
   }, [formId, isEditMode, navigate]);
+
+  // Check if current user is superadmin
+  useEffect(() => {
+    const adminUser = localStorage.getItem('adminUser');
+    if (adminUser) {
+      try {
+        const user = JSON.parse(adminUser);
+        setIsSuperAdmin(user.role === 'super_admin');
+      } catch (error) {
+        console.error('Error parsing admin user:', error);
+      }
+    }
+  }, []);
 
   const loadFormData = async () => {
     try {
@@ -252,6 +268,40 @@ const FormBuilder = () => {
     }
   };
 
+  // Load assessment questions for superadmin scale management
+  const loadAssessmentQuestions = async () => {
+    if (!isSuperAdmin || !isEditMode || formData.form_type !== 'assessment') {
+      return;
+    }
+    
+    try {
+      const response = await superadminAPI.getAssessmentQuestions(formId);
+      setAssessmentQuestions(response.data.questions);
+    } catch (error) {
+      console.error('Failed to load assessment questions:', error);
+    }
+  };
+
+  // Update scale order for a question
+  const updateScaleOrder = async (questionId, newScaleOrder) => {
+    try {
+      await superadminAPI.updateScaleOrder(formId, questionId, newScaleOrder);
+      // Reload assessment questions to reflect changes
+      loadAssessmentQuestions();
+      alert('Scale order updated successfully!');
+    } catch (error) {
+      console.error('Failed to update scale order:', error);
+      alert('Failed to update scale order: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  // Load assessment questions when entering scale order mode
+  useEffect(() => {
+    if (scaleOrderMode) {
+      loadAssessmentQuestions();
+    }
+  }, [scaleOrderMode, isSuperAdmin, isEditMode, formData.form_type]);
+
   if (loadingForm) {
     return (
       <div>
@@ -315,10 +365,49 @@ const FormBuilder = () => {
                 className="form-select"
               >
                 <option value="standard">Standard Form (Google-like)</option>
-                <option value="assessment">Assessment/Rating Form (4-point scale)</option>
+                <option value="assessment">Assessment/Rating Form (5-point scale)</option>
               </select>
             </div>
           </div>
+
+          {/* Superadmin Scale Management */}
+          {isSuperAdmin && isEditMode && formData.form_type === 'assessment' && (
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h2 style={{ margin: '0', color: '#e74c3c' }}>🔧 Superadmin: Assessment Scale Management</h2>
+                <button
+                  type="button"
+                  onClick={() => setScaleOrderMode(!scaleOrderMode)}
+                  className={`btn ${scaleOrderMode ? 'btn-danger' : 'btn-warning'}`}
+                >
+                  {scaleOrderMode ? 'Exit Scale Mode' : 'Manage Scale Order'}
+                </button>
+              </div>
+              
+              {scaleOrderMode && (
+                <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '8px', border: '2px solid #fecaca' }}>
+                  <p style={{ margin: '0 0 15px 0', color: '#dc2626', fontWeight: 'bold' }}>
+                    ⚠️ Customize the order of rating numbers (1-5) for each assessment question.
+                    <br />Default order: 1, 2, 3, 4, 5 (Strongly Disagree → Strongly Agree)
+                  </p>
+                  
+                  {assessmentQuestions.length > 0 ? (
+                    assessmentQuestions.map(question => (
+                      <ScaleOrderEditor
+                        key={question.id}
+                        question={question}
+                        onUpdateScaleOrder={updateScaleOrder}
+                      />
+                    ))
+                  ) : (
+                    <p style={{ color: '#6c757d', fontStyle: 'italic' }}>
+                      No assessment questions found. Save the form first to manage scale orders.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -495,7 +584,7 @@ const FormBuilder = () => {
                     <option value="radio">Multiple Choice (Radio)</option>
                     <option value="checkbox">Checkboxes</option>
                     {formData.form_type === 'assessment' && (
-                      <option value="assessment">Assessment Scale (1-4)</option>
+                      <option value="assessment">Assessment Scale (1-5)</option>
                     )}
                   </select>
                 </div>
@@ -944,6 +1033,166 @@ const FormBuilder = () => {
           </div>
         </form>
       </div>
+    </div>
+  );
+};
+
+// ScaleOrderEditor Component for Superadmin
+const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
+  const [scaleOrder, setScaleOrder] = useState(question.scaleOrder);
+  const [isEditing, setIsEditing] = useState(false);
+
+  const handleSave = () => {
+    onUpdateScaleOrder(question.id, scaleOrder);
+    setIsEditing(false);
+  };
+
+  const handleReset = () => {
+    setScaleOrder([1, 2, 3, 4, 5]);
+  };
+
+  const moveItem = (fromIndex, toIndex) => {
+    const newOrder = [...scaleOrder];
+    const [movedItem] = newOrder.splice(fromIndex, 1);
+    newOrder.splice(toIndex, 0, movedItem);
+    setScaleOrder(newOrder);
+  };
+
+  return (
+    <div style={{ 
+      backgroundColor: '#ffffff', 
+      border: '1px solid #e5e7eb', 
+      borderRadius: '6px', 
+      padding: '15px', 
+      marginBottom: '15px' 
+    }}>
+      <div style={{ marginBottom: '10px' }}>
+        <h4 style={{ margin: '0 0 5px 0', color: '#374151' }}>
+          Question {question.questionOrder}: {question.questionTextEn}
+        </h4>
+        {question.questionTextAr && (
+          <p style={{ margin: '0', color: '#6b7280', fontSize: '14px' }}>
+            Arabic: {question.questionTextAr}
+          </p>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+        <strong style={{ color: '#374151' }}>Current Scale Order:</strong>
+        <div style={{ display: 'flex', gap: '5px' }}>
+          {scaleOrder.map((rating, index) => (
+            <span
+              key={index}
+              style={{
+                backgroundColor: '#f3f4f6',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontWeight: 'bold',
+                color: '#374151'
+              }}
+            >
+              {rating}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {!isEditing ? (
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            type="button"
+            onClick={() => setIsEditing(true)}
+            className="btn btn-sm btn-outline-primary"
+          >
+            Edit Order
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="btn btn-sm btn-outline-secondary"
+          >
+            Reset to Default (1,2,3,4,5)
+          </button>
+        </div>
+      ) : (
+        <div>
+          <div style={{ marginBottom: '15px' }}>
+            <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#6b7280' }}>
+              Drag to reorder or use buttons:
+            </p>
+            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+              {scaleOrder.map((rating, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    backgroundColor: '#f9fafb',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    padding: '8px'
+                  }}
+                >
+                  <span style={{ fontWeight: 'bold', marginRight: '8px' }}>{rating}</span>
+                  <div style={{ display: 'flex', gap: '2px' }}>
+                    <button
+                      type="button"
+                      onClick={() => index > 0 && moveItem(index, index - 1)}
+                      disabled={index === 0}
+                      style={{
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        cursor: index === 0 ? 'not-allowed' : 'pointer',
+                        opacity: index === 0 ? 0.5 : 1,
+                        fontSize: '12px'
+                      }}
+                      title="Move Left"
+                    >
+                      ←
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => index < scaleOrder.length - 1 && moveItem(index, index + 1)}
+                      disabled={index === scaleOrder.length - 1}
+                      style={{
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        cursor: index === scaleOrder.length - 1 ? 'not-allowed' : 'pointer',
+                        opacity: index === scaleOrder.length - 1 ? 0.5 : 1,
+                        fontSize: '12px'
+                      }}
+                      title="Move Right"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="btn btn-sm btn-success"
+            >
+              Save Order
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setScaleOrder(question.scaleOrder);
+                setIsEditing(false);
+              }}
+              className="btn btn-sm btn-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

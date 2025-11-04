@@ -39,6 +39,16 @@ export const adminAPI = {
   },
 };
 
+// Superadmin API
+export const superadminAPI = {
+  getAssessmentQuestions: (formId) => api.get(`/api/superadmin/forms/${formId}/assessment-questions`),
+  getScaleOrder: (formId, questionId) => api.get(`/api/superadmin/forms/${formId}/questions/${questionId}/scale-order`),
+  updateScaleOrder: (formId, questionId, scaleOrder) => 
+    api.put(`/api/superadmin/forms/${formId}/questions/${questionId}/scale-order`, { scaleOrder }),
+  changePassword: (currentPassword, newPassword) => 
+    api.post('/api/superadmin/change-password', { currentPassword, newPassword }),
+};
+
 // Public Form API
 export const formAPI = {
   getForm: (uniqueLink) => api.get(`/api/form/${uniqueLink}`),

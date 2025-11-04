@@ -61,11 +61,54 @@ const FormResponses = () => {
     }
   };
 
-  const formatResponseValue = (value) => {
+  const formatResponseValue = (value, questionId, questions) => {
     if (Array.isArray(value)) {
       return value.join(', ');
     }
+    
+    // Special formatting for assessment questions
+    if (questions) {
+      const question = questions.find(q => q.id.toString() === questionId.toString());
+      if (question && question.question_type === 'assessment') {
+        const rating = parseInt(value);
+        if (rating >= 1 && rating <= 5) {
+          return `${rating} (${getAssessmentDescription(rating, question)})`;
+        }
+      }
+    }
+    
     return value?.toString() || 'No answer';
+  };
+
+  const getAssessmentDescription = (rating, question) => {
+    // Provide context for assessment ratings
+    switch(rating) {
+      case 1:
+      case 2:
+        return question.left_statement || 'Disagree/Low';
+      case 3:
+        return 'Neutral/Moderate';
+      case 4:
+      case 5:
+        return question.right_statement || 'Agree/High';
+      default:
+        return '';
+    }
+  };
+
+  const getQuestionText = (questionId, questions) => {
+    if (!questions) return questionId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    
+    const question = questions.find(q => q.id.toString() === questionId.toString());
+    if (!question) {
+      // Handle special keys like year_selection
+      if (questionId === 'year_selection') {
+        return 'Year Selection';
+      }
+      return questionId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    }
+    
+    return question.question_text || `Question ${question.order_number}`;
   };
 
   if (loading) return <div className="loading">Loading responses...</div>;
@@ -129,10 +172,10 @@ const FormResponses = () => {
                     {Object.entries(response.responses).map(([key, value]) => (
                       <div key={key} style={{ marginBottom: '10px', paddingBottom: '10px', borderBottom: '1px solid #eee' }}>
                         <div style={{ fontSize: '14px', color: '#666', marginBottom: '5px' }}>
-                          {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:
+                          {getQuestionText(key, response.questions)}:
                         </div>
                         <div style={{ fontWeight: '500' }}>
-                          {formatResponseValue(value)}
+                          {formatResponseValue(value, key, response.questions)}
                         </div>
                       </div>
                     ))}

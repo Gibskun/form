@@ -14,9 +14,9 @@ A comprehensive form system built with React.js (frontend) and Node.js/Express (
 - Multiple question types support
 
 #### B. Assessment/Rating Form (Special)
-- 4-point rating scale (Likert scale)
+- 5-point rating scale (Likert scale)
 - Bilingual support (English/Indonesian)
-- Format: Left Statement | [1-2-3-4] | Right Statement
+- Format: Left Statement | [1-2-3-4-5] | Right Statement
 
 ### 🔗 Form Access System
 - Users access forms through unique links
@@ -172,9 +172,9 @@ npm start
 - Checkboxes (multiple choice)
 
 #### Assessment Form
-- 4-point Likert scale (1-2-3-4)
+- 5-point Likert scale (1-2-3-4-5)
 - Bilingual statements (English/Indonesian)
-- Logic: 1-2 leans toward left statement, 3-4 toward right
+- Logic: 1-2 leans toward left statement, 3 is neutral, 4-5 toward right
 - Language toggle for users
 
 ### Conditional Questions
