@@ -299,48 +299,97 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       RETURNING *
     `, [title, description, form_type, formId]);
 
-    // Get existing questions to preserve scale_order
+    // Get existing questions to preserve IDs and scale_order
     const existingQuestions = await pool.query(`
-      SELECT id, scale_order FROM form_questions WHERE form_id = $1
+      SELECT id, question_text, question_text_id, question_type, order_number, scale_order,
+             left_statement, right_statement, left_statement_id, right_statement_id, options, is_required
+      FROM form_questions WHERE form_id = $1 ORDER BY order_number
     `, [formId]);
-    const existingScaleOrders = {};
+
+    // Create maps for existing questions
+    const existingQuestionsMap = {};
     existingQuestions.rows.forEach(row => {
-      existingScaleOrders[row.id] = row.scale_order;
+      existingQuestionsMap[row.order_number] = row;
     });
 
-    // Delete existing questions and conditional questions
-    await pool.query('DELETE FROM form_questions WHERE form_id = $1', [formId]);
+    // Delete conditional questions (we'll recreate these)
     await pool.query('DELETE FROM conditional_questions WHERE form_id = $1', [formId]);
 
-    // Insert updated questions and create ID mapping
+    // Process updated questions - preserve existing IDs when possible
     const questionIdMap = {}; // Maps frontend ID to database ID
     if (questions && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
+        const orderNumber = i + 1;
+        const existingQuestion = existingQuestionsMap[orderNumber];
+
+        let questionResult;
         
-        // Preserve existing scale_order if this is an assessment question
-        let scaleOrder = null;
-        if (q.question_type === 'assessment') {
-          scaleOrder = existingScaleOrders[q.id] || [1, 2, 3, 4, 5];
+        if (existingQuestion) {
+          // Update existing question to preserve its ID
+          console.log(`📝 Updating existing question ID ${existingQuestion.id} at position ${orderNumber}`);
+          
+          // Preserve existing scale_order if this is an assessment question
+          let scaleOrder = null;
+          if (q.question_type === 'assessment') {
+            scaleOrder = existingQuestion.scale_order || [1, 2, 3, 4, 5];
+          }
+          
+          questionResult = await pool.query(`
+            UPDATE form_questions 
+            SET question_text = $1, question_text_id = $2, question_type = $3, options = $4,
+                left_statement = $5, right_statement = $6, left_statement_id = $7, right_statement_id = $8,
+                is_required = $9, order_number = $10, scale_order = $11, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $12 AND form_id = $13
+            RETURNING id
+          `, [
+            q.question_text, q.question_text_id, q.question_type,
+            q.options ? JSON.stringify(q.options) : null,
+            q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
+            q.is_required, orderNumber, scaleOrder ? JSON.stringify(scaleOrder) : null,
+            existingQuestion.id, formId
+          ]);
+          
+          // Map frontend ID to existing database ID (preserved)
+          if (q.id) {
+            questionIdMap[q.id] = existingQuestion.id;
+          }
+        } else {
+          // Create new question (only for truly new questions)
+          console.log(`🆕 Creating new question at position ${orderNumber}`);
+          
+          let scaleOrder = null;
+          if (q.question_type === 'assessment') {
+            scaleOrder = [1, 2, 3, 4, 5];
+          }
+          
+          questionResult = await pool.query(`
+            INSERT INTO form_questions 
+            (form_id, question_text, question_text_id, question_type, options, 
+             left_statement, right_statement, left_statement_id, right_statement_id, 
+             is_required, order_number, scale_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING id
+          `, [
+            formId, q.question_text, q.question_text_id, q.question_type,
+            q.options ? JSON.stringify(q.options) : null,
+            q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
+            q.is_required, orderNumber, scaleOrder ? JSON.stringify(scaleOrder) : null
+          ]);
+          
+          // Map frontend ID to new database ID
+          if (q.id) {
+            questionIdMap[q.id] = questionResult.rows[0].id;
+          }
         }
-        
-        const questionResult = await pool.query(`
-          INSERT INTO form_questions 
-          (form_id, question_text, question_text_id, question_type, options, 
-           left_statement, right_statement, left_statement_id, right_statement_id, 
-           is_required, order_number, scale_order)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-          RETURNING id
-        `, [
-          formId, q.question_text, q.question_text_id, q.question_type,
-          q.options ? JSON.stringify(q.options) : null,
-          q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
-          q.is_required, i + 1, scaleOrder ? JSON.stringify(scaleOrder) : null
-        ]);
-        
-        // Map frontend ID to database ID
-        if (q.id) {
-          questionIdMap[q.id] = questionResult.rows[0].id;
+      }
+      
+      // Delete any remaining questions that are no longer needed (if form got shorter)
+      if (questions.length < existingQuestions.rows.length) {
+        const questionsToDelete = existingQuestions.rows.slice(questions.length);
+        for (const questionToDelete of questionsToDelete) {
+          console.log(`🗑️ Deleting unused question ID ${questionToDelete.id} from position ${questionToDelete.order_number}`);
+          await pool.query('DELETE FROM form_questions WHERE id = $1', [questionToDelete.id]);
         }
       }
     }
@@ -542,20 +591,118 @@ app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, asyn
       fgColor: { argb: 'FFE0E0E0' }
     };
 
-    // Add data rows
+    // Collect all question IDs ever used in responses for comprehensive export
+    const allQuestionIds = new Set();
+    const specialFields = new Set();
+    
+    responses.forEach(response => {
+      Object.keys(response.responses).forEach(key => {
+        if (key === 'year_selection' || key === 'conditional_year' || isNaN(key)) {
+          specialFields.add(key);
+        } else {
+          allQuestionIds.add(key);
+        }
+      });
+    });
+
+    // Create comprehensive question mapping
+    const questionMapping = {};
+    
+    // Add current questions (these have full metadata)
+    questions.forEach(q => {
+      questionMapping[q.id.toString()] = {
+        id: q.id,
+        text: q.question_text || `Question ${q.order_number}`,
+        order: q.order_number,
+        type: 'current'
+      };
+    });
+
+    // Try to find historical questions that might still exist
+    if (allQuestionIds.size > 0) {
+      const historicalQuestionIds = Array.from(allQuestionIds).filter(id => !questionMapping[id]);
+      if (historicalQuestionIds.length > 0) {
+        try {
+          const placeholders = historicalQuestionIds.map((_, i) => `$${i + 1}`).join(',');
+          const historicalQuery = `
+            SELECT id, question_text, order_number, form_id 
+            FROM form_questions 
+            WHERE id IN (${placeholders})
+          `;
+          const historicalResult = await pool.query(historicalQuery, historicalQuestionIds.map(id => parseInt(id)));
+          
+          historicalResult.rows.forEach(q => {
+            questionMapping[q.id.toString()] = {
+              id: q.id,
+              text: q.question_text || `Question ${q.order_number}`,
+              order: q.order_number || 999,
+              type: q.form_id === parseInt(formId) ? 'historical' : 'other_form'
+            };
+          });
+        } catch (err) {
+          console.warn('Could not fetch historical questions:', err.message);
+        }
+      }
+    }
+
+    // Add fallback entries for completely orphaned question IDs
+    allQuestionIds.forEach(id => {
+      if (!questionMapping[id]) {
+        questionMapping[id] = {
+          id: parseInt(id),
+          text: `Question ID ${id} (Historical)`,
+          order: 999,
+          type: 'orphaned'
+        };
+      }
+    });
+
+    // Create ordered list of all questions for headers
+    const allQuestions = Object.values(questionMapping).sort((a, b) => {
+      const typePriority = { current: 1, historical: 2, other_form: 3, orphaned: 4 };
+      if (typePriority[a.type] !== typePriority[b.type]) {
+        return typePriority[a.type] - typePriority[b.type];
+      }
+      return a.order - b.order;
+    });
+
+    // Update headers to include all questions + special fields
+    const allHeaders = [
+      'Name',
+      'Email', 
+      'Submitted At',
+      ...allQuestions.map(q => q.text),
+      ...Array.from(specialFields).map(field => {
+        if (field === 'year_selection') return 'Year Selection';
+        if (field === 'conditional_year') return 'Conditional Year';
+        return field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      })
+    ];
+
+    worksheet.getRow(1).values = allHeaders;
+
+    // Add data rows with comprehensive mapping
     responses.forEach(response => {
       const responseData = response.responses;
       const row = [
         response.respondent_name,
         response.respondent_email,
         response.submitted_at.toISOString().split('T')[0],
-        ...questions.map(q => {
-          const answer = responseData[q.id] || responseData[`question_${q.id}`] || '';
-          return Array.isArray(answer) ? answer.join(', ') : answer;
+        // Map all questions in order
+        ...allQuestions.map(q => {
+          const answer = responseData[q.id.toString()] || '';
+          return Array.isArray(answer) ? answer.join(', ') : (answer || '');
+        }),
+        // Map special fields
+        ...Array.from(specialFields).map(field => {
+          const answer = responseData[field] || '';
+          return Array.isArray(answer) ? answer.join(', ') : (answer || '');
         })
       ];
       worksheet.addRow(row);
     });
+
+    console.log(`📊 Excel export: ${responses.length} responses, ${allQuestions.length} total questions (${questions.length} current + ${allQuestions.length - questions.length} historical)`);
 
     // Auto-fit columns
     worksheet.columns.forEach(column => {
