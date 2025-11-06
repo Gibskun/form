@@ -17,8 +17,20 @@ const FormFiller = () => {
   const [selectedYear, setSelectedYear] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [currentStep, setCurrentStep] = useState(1); // 1: year question, 2: conditional questions
+  const [currentStep, setCurrentStep] = useState(1); // 1: year question, 2: role selection, 3: conditional questions
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
+  const [selectedRole, setSelectedRole] = useState('');
+  const [conditionalSections, setConditionalSections] = useState({ sections: [], questions: [] });
+  const [loadingSections, setLoadingSections] = useState(false);
+  const [yearBasedSections, setYearBasedSections] = useState({ sections: [], questions: [] });
+  
+  // Round-robin evaluation state for Management role
+  const [managementNames, setManagementNames] = useState([]);
+  const [currentPersonIndex, setCurrentPersonIndex] = useState(0);
+  const [currentSectionForPerson, setCurrentSectionForPerson] = useState(0);
+  const [managementResponses, setManagementResponses] = useState({});
+  const [isManagementFlow, setIsManagementFlow] = useState(false);
 
 
   useEffect(() => {
@@ -65,7 +77,7 @@ const FormFiller = () => {
     setSelectedYear(year);
     setResponses({ ...responses, year_selection: year });
 
-    // Fetch conditional questions based on selected year
+    // Fetch conditional questions based on selected year (legacy support)
     if (form.conditional_questions && form.conditional_questions.length > 0 && year) {
       try {
         setLoadingQuestions(true);
@@ -89,6 +101,43 @@ const FormFiller = () => {
       setConditionalQuestions([]);
       setLoadingQuestions(false);
     }
+
+    // Fetch year-based conditional sections
+    if (form.conditional_sections && form.conditional_sections.length > 0 && year) {
+      try {
+        setLoadingQuestions(true);
+        const response = await formAPI.getConditionalSections(uniqueLink, year);
+        setYearBasedSections(response.data || { sections: [], questions: [] });
+        console.log(`✓ Loaded ${response.data?.sections?.length || 0} year-based sections for ${year}`);
+      } catch (error) {
+        console.error('Failed to fetch year-based sections:', error);
+        setYearBasedSections({ sections: [], questions: [] });
+      } finally {
+        setLoadingQuestions(false);
+      }
+    } else if (!year) {
+      setYearBasedSections({ sections: [], questions: [] });
+    }
+
+    // If role is already selected and both conditions exist, update combined sections
+    if (selectedRole && year) {
+      const hasYearConditions = form.conditional_sections && form.conditional_sections.length > 0;
+      const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+      
+      if (hasYearConditions && hasRoleConditions) {
+        try {
+          setLoadingSections(true);
+          const response = await formAPI.getCombinedConditionalSections(uniqueLink, year, selectedRole);
+          setConditionalSections(response.data || { sections: [], questions: [] });
+          console.log(`✓ Updated combined sections for year ${year} + role ${selectedRole}`);
+        } catch (error) {
+          console.error('Failed to update combined conditional sections:', error);
+          setConditionalSections({ sections: [], questions: [] });
+        } finally {
+          setLoadingSections(false);
+        }
+      }
+    }
   };
 
   const handleYearNext = () => {
@@ -100,16 +149,209 @@ const FormFiller = () => {
     setCurrentStep(2);
   };
 
+  const handleRoleChange = async (role) => {
+    setSelectedRole(role);
+    setResponses({ ...responses, role_selection: role });
+
+    // Special handling for Management role - bypass year logic
+    if (role === 'management') {
+      try {
+        setLoadingSections(true);
+        setError('');
+        
+        // For Management role, only use role-based sections (ignore year conditions)
+        const response = await formAPI.getRoleBasedSections(uniqueLink, role);
+        setConditionalSections(response.data || { sections: [], questions: [] });
+        
+        console.log('🏢 Management role selected - bypassing year logic');
+        console.log('📋 Loaded management sections:', response.data);
+        
+        if (response.data && response.data.sections && response.data.sections.length > 0) {
+          console.log(`✓ Loaded ${response.data.sections.length} sections for Management role`);
+          console.log(`✓ Loaded ${response.data.questions.length} questions for Management role`);
+          
+          // Extract management names from the role-based conditional sections
+          const managementSection = response.data.managementConfig;
+          if (managementSection && managementSection.management_names) {
+            const names = managementSection.management_names
+              .split('\n')
+              .map(name => name.trim())
+              .filter(name => name.length > 0)
+              .map(name => name.replace(/^\d+\.\s*/, '')); // Remove numbering if present
+            
+            setManagementNames(names);
+            setIsManagementFlow(true);
+            setCurrentPersonIndex(0);
+            setCurrentSectionForPerson(0);
+            console.log('👥 Management names loaded:', names);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch management sections:', error);
+        setConditionalSections({ sections: [], questions: [] });
+      } finally {
+        setLoadingSections(false);
+      }
+      return; // Exit early for Management role
+    }
+
+    // Use combined conditional logic when both year and role conditions exist (for Employee/Team Lead)
+    const hasYearConditions = form.conditional_sections && form.conditional_sections.length > 0;
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+
+    if ((hasYearConditions && hasRoleConditions) && role && selectedYear) {
+      try {
+        setLoadingSections(true);
+        setError('');
+        
+        // Use the new combined API that handles both year and role
+        const response = await formAPI.getCombinedConditionalSections(uniqueLink, selectedYear, role);
+        setConditionalSections(response.data || { sections: [], questions: [] });
+        
+        console.log('🔍 Combined conditional sections response:', response.data);
+        console.log('🔍 Full API response status:', response.status);
+        console.log('🔍 Setting conditionalSections to:', response.data);
+        
+        if (response.data && response.data.sections && response.data.sections.length > 0) {
+          console.log(`✓ Loaded ${response.data.sections.length} sections for year ${selectedYear} + role ${role}`);
+          console.log(`✓ Loaded ${response.data.questions.length} questions for year ${selectedYear} + role ${role}`);
+          console.log('📋 Sections loaded:', response.data.sections.map(s => ({ id: s.id, name: s.section_name })));
+          console.log('📋 Questions loaded:', response.data.questions.map(q => ({ id: q.id, text: q.question_text, section_id: q.section_id })));
+        } else {
+          console.log(`⚠ No sections found for year ${selectedYear} + role ${role}`);
+          console.log('🔍 response.data:', response.data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch combined conditional sections:', error);
+        setConditionalSections({ sections: [], questions: [] });
+      } finally {
+        setLoadingSections(false);
+      }
+    } 
+    // Fallback to role-only logic (legacy)
+    else if (hasRoleConditions && role) {
+      try {
+        setLoadingSections(true);
+        setError('');
+        const response = await formAPI.getRoleBasedSections(uniqueLink, role);
+        setConditionalSections(response.data || { sections: [], questions: [] });
+        
+        if (response.data && response.data.sections && response.data.sections.length > 0) {
+          console.log(`✓ Loaded ${response.data.sections.length} sections for role ${role}`);
+          console.log(`✓ Loaded ${response.data.questions.length} questions for role ${role}`);
+        }
+      } catch (error) {
+        console.error('Failed to fetch role-based sections:', error);
+        setConditionalSections({ sections: [], questions: [] });
+      } finally {
+        setLoadingSections(false);
+      }
+    } else if (!role) {
+      setConditionalSections({ sections: [], questions: [] });
+      setLoadingSections(false);
+    }
+  };
+
+  const handleRoleNext = () => {
+    if (!selectedRole) {
+      setError('Please select your role first');
+      return;
+    }
+    
+    // Check if sections are still loading
+    if (loadingSections) {
+      setError('Please wait while we load your questions...');
+      return;
+    }
+    
+    // For Management role, skip the year/role combination check
+    if (selectedRole === 'management') {
+      if (!conditionalSections.questions || conditionalSections.questions.length === 0) {
+        setError('No questions found for Management role. Please contact administrator.');
+        return;
+      }
+      setError('');
+      setCurrentStep(3);
+      return;
+    }
+    
+    // Check if we're in combined mode and have sections loaded (for Employee/Team Lead)
+    const hasYearConditions = form.conditional_sections && form.conditional_sections.length > 0;
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+    
+    if (hasYearConditions && hasRoleConditions) {
+      // In combined mode, make sure conditionalSections has data
+      if (!conditionalSections.questions || conditionalSections.questions.length === 0) {
+        setError('No questions found for your selected year and role combination. Please try different selections.');
+        return;
+      }
+    }
+    
+    setError('');
+    setCurrentStep(3);
+  };
+
   const handleBackToYear = () => {
     setCurrentStep(1);
     setError('');
   };
 
+  const handleBackToRole = () => {
+    setCurrentStep(2);
+    setError('');
+  };
+
+  // Management round-robin navigation handlers
+  const handleManagementNext = () => {
+    const sectionCount = Object.keys(getQuestionsBySections()).length;
+    
+    // CORRECTED LOGIC: Person-first flow (complete all sections for one person before moving to next person)
+    
+    // If we're not at the last section for current person, move to next section
+    if (currentSectionForPerson < sectionCount - 1) {
+      setCurrentSectionForPerson(currentSectionForPerson + 1);
+    } 
+    // If we're at the last section for current person, move to next person with first section
+    else if (currentPersonIndex < managementNames.length - 1) {
+      setCurrentPersonIndex(currentPersonIndex + 1);
+      setCurrentSectionForPerson(0);
+    }
+    // If we're at the last section of the last person, form is complete (handled in render)
+  };
+
+  const handleManagementPrevious = () => {
+    // CORRECTED LOGIC: Person-first flow (move backward through sections, then people)
+    
+    // If we're not at the first section for current person, move to previous section
+    if (currentSectionForPerson > 0) {
+      setCurrentSectionForPerson(currentSectionForPerson - 1);
+    }
+    // If we're at the first section for current person, move to previous person with last section  
+    else if (currentPersonIndex > 0) {
+      setCurrentPersonIndex(currentPersonIndex - 1);
+      setCurrentSectionForPerson(Object.keys(getQuestionsBySections()).length - 1);
+    }
+    // If we're at the first section of the first person, can't go back (handled in render)
+  };
+
   const handleResponseChange = (questionId, value, questionType) => {
-    setResponses({
-      ...responses,
-      [questionId]: value
-    });
+    if (isManagementFlow) {
+      // For management flow, store responses per person per section
+      const personKey = `${managementNames[currentPersonIndex]}_${currentSectionForPerson}`;
+      setManagementResponses({
+        ...managementResponses,
+        [personKey]: {
+          ...managementResponses[personKey],
+          [questionId]: value
+        }
+      });
+    } else {
+      // Regular flow
+      setResponses({
+        ...responses,
+        [questionId]: value
+      });
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -118,14 +360,63 @@ const FormFiller = () => {
     setError('');
 
     try {
+      if (isManagementFlow) {
+        console.log('🏢 Management flow submission - Debug info:', {
+          managementNames,
+          currentPersonIndex,
+          currentSectionForPerson,
+          managementResponsesKeys: Object.keys(managementResponses),
+          managementResponsesData: managementResponses
+        });
+
+        // Validate that at least some responses exist for management flow
+        if (!managementResponses || Object.keys(managementResponses).length === 0) {
+          throw new Error('Please answer at least some questions before submitting the assessment.');
+        }
+
+        // Management flow submission - compile all responses
+        const managementPayload = {
+          ...userInfo,
+          role_selection: 'management',
+          management_evaluation: true,
+          evaluator_name: userInfo.respondent_name,
+          evaluated_people: managementNames,
+          management_responses: managementResponses
+        };
+
+        await formAPI.submitForm(uniqueLink, managementPayload);
+        setSubmitted(true);
+        return;
+      }
+
+      // Regular flow validation and submission
+      console.log('🔍 Regular flow submission - Debug info:', {
+        selectedYear,
+        selectedRole,
+        responsesKeys: Object.keys(responses),
+        responsesData: responses,
+        allQuestionsCount: getQuestionsToShow().length
+      });
+
       // Validate year selection (always required now)
       if (!selectedYear) {
         throw new Error('Please select your year of entry before submitting the form');
       }
 
-      // Validate required questions — only validate visible questions (those shown to the user)
-      const visibleQuestions = getQuestionsToShow();
-      const requiredQuestions = visibleQuestions.filter(q => q.is_required);
+      // Validate all required questions across all sections
+      const allQuestions = getQuestionsToShow();
+      const requiredQuestions = allQuestions.filter(q => q.is_required);
+
+      console.log('🔍 Validation info:', {
+        allQuestionsCount: allQuestions.length,
+        requiredQuestionsCount: requiredQuestions.length,
+        userHasAnswered: Object.keys(responses).length
+      });
+
+      // Ensure user has answered at least some questions
+      if (allQuestions.length > 0 && Object.keys(responses).length === 0) {
+        throw new Error('Please answer at least some questions before submitting the form.');
+      }
 
       for (const question of requiredQuestions) {
         const val = responses[question.id];
@@ -146,7 +437,9 @@ const FormFiller = () => {
 
       const payload = {
         ...userInfo,
-        responses: responses
+        responses: responses || {}, // Ensure responses is never null/undefined
+        role_selection: selectedRole,
+        year_selection: selectedYear
       };
 
       await formAPI.submitForm(uniqueLink, payload);
@@ -159,7 +452,16 @@ const FormFiller = () => {
   };
 
   const renderQuestion = (question) => {
-    const value = responses[question.id] || '';
+    let value;
+    
+    if (isManagementFlow) {
+      // For management flow, get response for current person and section
+      const personKey = `${managementNames[currentPersonIndex]}_${currentSectionForPerson}`;
+      value = managementResponses[personKey]?.[question.id] || '';
+    } else {
+      // Regular flow
+      value = responses[question.id] || '';
+    }
 
     switch (question.question_type) {
       case 'text':
@@ -406,19 +708,292 @@ const FormFiller = () => {
   const getQuestionsToShow = () => {
     if (!form) return [];
     
-    // If no year selected, don't show any questions
+    // Special handling for Management role - bypass year requirements
+    if (selectedRole === 'management') {
+      console.log('🏢 Management role - bypassing year requirements');
+      if (conditionalSections.questions && conditionalSections.questions.length > 0) {
+        console.log('✅ Using management conditional sections:', conditionalSections.questions.length, 'questions');
+        return conditionalSections.questions;
+      } else {
+        console.log('⚠️ No management sections found');
+        return [];
+      }
+    }
+    
+    // If no year selected, don't show any questions (for Employee/Team Lead)
     if (!selectedYear) {
       return [];
     }
+
+    const hasYearConditions = form.conditional_sections && form.conditional_sections.length > 0;
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+
+    console.log('🔍 getQuestionsToShow DEBUG:', {
+      selectedYear,
+      selectedRole,
+      hasYearConditions,
+      hasRoleConditions,
+      conditionalSections,
+      conditionalSectionsLength: conditionalSections.questions?.length || 0,
+      yearBasedSections,
+      yearBasedSectionsLength: yearBasedSections.questions?.length || 0,
+      formQuestions: form.questions?.length || 0
+    });
+
+    // Check for combined conditional logic (year + role)
+    if (hasYearConditions && hasRoleConditions) {
+      console.log('🎯 Using COMBINED conditional logic path');
+      // If role not selected yet, don't show questions
+      if (!selectedRole) {
+        console.log('⚠️ Role not selected, showing no questions');
+        return [];
+      }
+      // Return questions from combined conditional sections
+      if (conditionalSections.questions && conditionalSections.questions.length > 0) {
+        console.log('✅ Using combined conditional sections:', conditionalSections.questions.length, 'questions');
+        console.log('📋 Combined questions:', conditionalSections.questions.map(q => ({ id: q.id, text: q.question_text, section_id: q.section_id })));
+        return conditionalSections.questions;
+      } else {
+        // No combined sections match the criteria, don't show any questions
+        console.log('⚠️ No combined sections found, showing no questions');
+        console.log('🔍 conditionalSections.questions:', conditionalSections.questions);
+        return [];
+      }
+    }
     
-    // If no conditional questions configured, show all base questions
-    if (!form.conditional_questions || form.conditional_questions.length === 0) {
-      return form.questions;
+    // Check for role-based conditional logic only
+    if (hasRoleConditions && !hasYearConditions) {
+      // If role not selected yet, don't show questions
+      if (!selectedRole) {
+        return [];
+      }
+      // Return questions from conditional sections based on role
+      if (conditionalSections.questions && conditionalSections.questions.length > 0) {
+        console.log('✅ Using role-based conditional sections:', conditionalSections.questions.length, 'questions');
+        return conditionalSections.questions;
+      } else {
+        // No conditional sections for this role, show standard form questions
+        console.log('⚠️ No role-based sections, using standard form questions');
+        return form.questions || [];
+      }
     }
 
-    // If conditional questions exist, show only the conditional questions for the selected year
-    // The backend already filtered the questions based on year conditions
-    return conditionalQuestions;
+    // Check for year-based conditional logic only
+    if (hasYearConditions && !hasRoleConditions) {
+      // Return questions from year-based conditional sections
+      if (yearBasedSections.questions && yearBasedSections.questions.length > 0) {
+        console.log('✅ Using year-based conditional sections:', yearBasedSections.questions.length, 'questions');
+        return yearBasedSections.questions;
+      } else {
+        // No conditional sections for this year, show standard form questions
+        console.log('⚠️ No year-based sections, using standard form questions');
+        return form.questions || [];
+      }
+    }
+    
+    // Fall back to legacy year-based conditional questions
+    if (form.conditional_questions && form.conditional_questions.length > 0) {
+      console.log('✅ Using legacy conditional questions:', conditionalQuestions.length, 'questions');
+      return conditionalQuestions;
+    }
+
+    // If no conditional logic configured, show all base questions
+    console.log('✅ Using all base form questions:', (form.questions || []).length, 'questions');
+    return form.questions || [];
+  };
+
+  const getQuestionsBySections = () => {
+    const questions = getQuestionsToShow();
+    if (!questions || questions.length === 0) return {};
+
+    console.log('🔍 getQuestionsBySections DEBUG:', {
+      questionsCount: questions.length,
+      questions: questions.map(q => ({ id: q.id, text: q.question_text, section_id: q.section_id })),
+      conditionalSections: conditionalSections.sections,
+      conditionalSectionsIds: conditionalSections.sections?.map(s => s.id),
+      yearBasedSections: yearBasedSections.sections,
+      yearBasedSectionsIds: yearBasedSections.sections?.map(s => s.id),
+      formSections: form.sections
+    });
+
+    // Group questions by sections
+    const questionsBySection = {};
+    const unassignedQuestions = [];
+
+    // Check if we're in combined mode (both year and role conditions exist)
+    const hasYearConditions = form.conditional_sections && form.conditional_sections.length > 0;
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+    const isInCombinedMode = hasYearConditions && hasRoleConditions && selectedYear && selectedRole;
+
+    questions.forEach(question => {
+      if (question.section_id) {
+        console.log(`🔎 Processing question ID ${question.id} with section_id ${question.section_id} (type: ${typeof question.section_id})`);
+        
+        let section = null;
+        
+        // In combined mode, ONLY use conditionalSections - don't fall back to yearBasedSections
+        if (isInCombinedMode) {
+          if (conditionalSections.sections && conditionalSections.sections.length > 0) {
+            console.log(`🔍 Combined mode: Checking conditionalSections.sections:`, conditionalSections.sections.map(s => `ID: ${s.id} (type: ${typeof s.id}), Name: ${s.section_name}`));
+            section = conditionalSections.sections.find(s => s.id === question.section_id);
+            if (section) {
+              console.log(`📂 Found section in conditionalSections: ${section.section_name} (ID: ${section.id})`);
+            } else {
+              console.log(`❌ Section ${question.section_id} NOT found in conditionalSections:`, conditionalSections.sections.map(s => s.id));
+            }
+          }
+          
+          // Fallback to form.sections if not found in conditionalSections
+          if (!section && form.sections) {
+            section = form.sections.find(s => s.id === question.section_id);
+            if (section) {
+              console.log(`📂 Found section in form.sections: ${section.section_name} (ID: ${section.id})`);
+            }
+          }
+        } else {
+          // Not in combined mode - use the original logic
+          
+          // First check if we have conditional sections (for role-based logic)
+          if (conditionalSections.sections && conditionalSections.sections.length > 0) {
+            console.log(`🔍 Checking conditionalSections.sections:`, conditionalSections.sections.map(s => `ID: ${s.id} (type: ${typeof s.id}), Name: ${s.section_name}`));
+            section = conditionalSections.sections.find(s => s.id === question.section_id);
+            if (section) {
+              console.log(`📂 Found section in conditionalSections: ${section.section_name} (ID: ${section.id})`);
+            } else {
+              console.log(`❌ Section ${question.section_id} NOT found in conditionalSections:`, conditionalSections.sections.map(s => s.id));
+            }
+          }
+          
+          // If not found in conditional sections, check year-based sections
+          if (!section && yearBasedSections.sections && yearBasedSections.sections.length > 0) {
+            console.log(`🔍 Checking yearBasedSections.sections:`, yearBasedSections.sections.map(s => `ID: ${s.id} (type: ${typeof s.id}), Name: ${s.section_name}`));
+            section = yearBasedSections.sections.find(s => s.id === question.section_id);
+            if (section) {
+              console.log(`📂 Found section in yearBasedSections: ${section.section_name} (ID: ${section.id})`);
+            } else {
+              console.log(`❌ Section ${question.section_id} NOT found in yearBasedSections:`, yearBasedSections.sections.map(s => s.id));
+            }
+          }
+          
+          // If not found in year-based sections, check form.sections
+          if (!section && form.sections) {
+            section = form.sections.find(s => s.id === question.section_id);
+            if (section) {
+              console.log(`📂 Found section in form.sections: ${section.section_name} (ID: ${section.id})`);
+            } else {
+              console.log(`❌ Section ${question.section_id} NOT found in form.sections`);
+            }
+          }
+        }
+        
+        const sectionName = section ? (section.section_name || section.name) : `Section ${question.section_id}`;
+        console.log(`📝 Question "${question.question_text}" → Section "${sectionName}"`);
+        
+        if (!questionsBySection[sectionName]) {
+          questionsBySection[sectionName] = [];
+        }
+        questionsBySection[sectionName].push(question);
+      } else {
+        unassignedQuestions.push(question);
+      }
+    });
+
+    // Add unassigned questions as a separate section if they exist
+    if (unassignedQuestions.length > 0) {
+      questionsBySection['Unassigned Questions'] = unassignedQuestions;
+    }
+
+    console.log('📊 Final questionsBySection:', Object.keys(questionsBySection).map(key => ({
+      sectionName: key,
+      questionCount: questionsBySection[key].length
+    })));
+
+    return questionsBySection;
+  };
+
+  // Initialize sections order when questions are available
+  useEffect(() => {
+    if (showQuestions && selectedYear) {
+      const questionsBySection = getQuestionsBySections();
+      const sectionNames = Object.keys(questionsBySection);
+      
+      setCurrentSectionIndex(0);
+    }
+  }, [showQuestions, selectedYear, selectedRole, conditionalQuestions, conditionalSections, yearBasedSections, form]);
+
+  // Get current section data
+  const getCurrentSectionData = () => {
+    const questionsBySection = getQuestionsBySections();
+    const sectionNames = Object.keys(questionsBySection);
+    
+    // Handle case where no sections exist - show all questions as one section
+    if (sectionNames.length === 0) {
+      const allQuestions = getQuestionsToShow();
+      return {
+        sectionName: 'Form Questions',
+        questions: allQuestions
+      };
+    }
+    
+    if (currentSectionIndex >= sectionNames.length) {
+      return { sectionName: '', questions: [] };
+    }
+    
+    const currentSectionName = sectionNames[currentSectionIndex];
+    return {
+      sectionName: currentSectionName,
+      questions: questionsBySection[currentSectionName] || []
+    };
+  };
+
+  // Validate current section
+  const validateCurrentSection = () => {
+    const { questions } = getCurrentSectionData();
+    const requiredQuestions = questions.filter(q => q.is_required);
+
+    for (const question of requiredQuestions) {
+      const val = responses[question.id];
+
+      // Handle checkbox (array) specially
+      if (question.question_type === 'checkbox') {
+        if (!Array.isArray(val) || val.length === 0) {
+          return { isValid: false, message: `Please answer: ${question.question_text}` };
+        }
+        continue;
+      }
+
+      // For other types, treat null/undefined/empty-string as unanswered
+      if (val === null || val === undefined || val === '') {
+        return { isValid: false, message: `Please answer: ${question.question_text}` };
+      }
+    }
+
+    return { isValid: true };
+  };
+
+  // Navigate to next section
+  const handleNextSection = () => {
+    const validation = validateCurrentSection();
+    if (!validation.isValid) {
+      setError(validation.message);
+      return;
+    }
+
+    setError('');
+    setCurrentSectionIndex(prev => prev + 1);
+  };
+
+  // Navigate to previous section
+  const handlePreviousSection = () => {
+    setError('');
+    setCurrentSectionIndex(prev => Math.max(0, prev - 1));
+  };
+
+  // Check if user is on the last section
+  const isLastSection = () => {
+    const questionsBySection = getQuestionsBySections();
+    const sectionCount = Object.keys(questionsBySection).length || 1; // At least 1 section
+    return currentSectionIndex >= sectionCount - 1;
   };
 
   if (loading) return <div className="loading">Loading form...</div>;
@@ -507,7 +1082,7 @@ const FormFiller = () => {
               <div style={{ textAlign: 'center', marginBottom: '15px' }}>
                 <h4 style={{ margin: '0', color: '#495057' }}>Form Progress</h4>
                 <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#6c757d' }}>
-                  Step {currentStep} of 2
+                  Step {currentStep} of 3
                 </p>
               </div>
               
@@ -518,6 +1093,7 @@ const FormFiller = () => {
                   fontSize: '14px',
                   fontWeight: '600'
                 }}>
+                  {/* Step 1: Year Selection */}
                   <div style={{ 
                     display: 'flex', 
                     alignItems: 'center',
@@ -541,56 +1117,81 @@ const FormFiller = () => {
                     }}>
                       {currentStep === 1 ? '1' : '✓'}
                     </div>
-                    <span>Year Selection</span>
+                    <span>Year</span>
                   </div>
                   
+                  {/* Connector 1 */}
                   <div style={{ 
-                    width: '60px', 
+                    width: '40px', 
                     height: '3px', 
-                    backgroundColor: currentStep === 2 ? '#28a745' : '#dee2e6',
-                    margin: '0 20px',
+                    backgroundColor: currentStep >= 2 ? '#28a745' : '#dee2e6',
+                    margin: '0 15px',
                     borderRadius: '2px',
-                    transition: 'all 0.3s ease',
-                    position: 'relative',
-                    overflow: 'hidden'
-                  }}>
-                    {currentStep === 2 && (
-                      <div style={{
-                        position: 'absolute',
-                        top: '0',
-                        left: '0',
-                        height: '100%',
-                        width: '100%',
-                        backgroundColor: '#28a745',
-                        borderRadius: '2px'
-                      }}></div>
-                    )}
-                  </div>
+                    transition: 'all 0.3s ease'
+                  }}></div>
                   
+                  {/* Step 2: Role Selection */}
                   <div style={{ 
                     display: 'flex', 
                     alignItems: 'center',
-                    color: currentStep === 2 ? '#007bff' : '#6c757d',
+                    color: currentStep === 2 ? '#007bff' : (currentStep > 2 ? '#28a745' : '#6c757d'),
                     transition: 'all 0.3s ease'
                   }}>
                     <div style={{
                       width: '35px',
                       height: '35px',
                       borderRadius: '50%',
-                      backgroundColor: currentStep === 2 ? '#007bff' : '#dee2e6',
-                      color: currentStep === 2 ? 'white' : '#6c757d',
+                      backgroundColor: currentStep === 2 ? '#007bff' : (currentStep > 2 ? '#28a745' : '#dee2e6'),
+                      color: currentStep >= 2 ? 'white' : '#6c757d',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       fontWeight: 'bold',
                       marginRight: '10px',
                       fontSize: '16px',
-                      boxShadow: currentStep === 2 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+                      boxShadow: currentStep >= 2 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
                       transition: 'all 0.3s ease'
                     }}>
-                      2
+                      {currentStep === 2 ? '2' : (currentStep > 2 ? '✓' : '2')}
                     </div>
-                    <span>Form Questions</span>
+                    <span>Role</span>
+                  </div>
+
+                  {/* Connector 2 */}
+                  <div style={{ 
+                    width: '40px', 
+                    height: '3px', 
+                    backgroundColor: currentStep >= 3 ? '#28a745' : '#dee2e6',
+                    margin: '0 15px',
+                    borderRadius: '2px',
+                    transition: 'all 0.3s ease'
+                  }}></div>
+                  
+                  {/* Step 3: Form Questions */}
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center',
+                    color: currentStep === 3 ? '#007bff' : '#6c757d',
+                    transition: 'all 0.3s ease'
+                  }}>
+                    <div style={{
+                      width: '35px',
+                      height: '35px',
+                      borderRadius: '50%',
+                      backgroundColor: currentStep === 3 ? '#007bff' : '#dee2e6',
+                      color: currentStep === 3 ? 'white' : '#6c757d',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      marginRight: '10px',
+                      fontSize: '16px',
+                      boxShadow: currentStep === 3 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+                      transition: 'all 0.3s ease'
+                    }}>
+                      3
+                    </div>
+                    <span>Questions</span>
                   </div>
                 </div>
               </div>
@@ -678,65 +1279,522 @@ const FormFiller = () => {
               </div>
             )}
 
-            {/* Step 2: Form Questions */}
+            {/* Step 2: Role Selection */}
             {currentStep === 2 && (
-              <form onSubmit={handleSubmit}>
-                <div style={{ 
-                  marginBottom: '20px', 
-                  padding: '15px', 
-                  backgroundColor: '#e3f2fd', 
-                  borderRadius: '8px',
-                  border: '1px solid #bbdefb'
-                }}>
-                  <h4 style={{ margin: '0 0 8px 0', color: '#1976d2' }}>
-                    📋 Form Questions for Year {selectedYear}
-                  </h4>
-                  <p style={{ margin: '0', fontSize: '14px', color: '#424242' }}>
-                    Answer the questions below. You can go back to change your year selection if needed.
-                  </p>
-                </div>
+              <div>
+                <div className="form-section">
+                  <div className="form-group text-center">
+                    <h3 style={{ marginBottom: '30px', color: '#333' }}>Select Your Role</h3>
+                    
+                    <div className="role-selection" style={{ margin: '20px 0' }}>
+                      <div 
+                        className={`role-option ${selectedRole === 'employee' ? 'selected' : ''}`}
+                        onClick={() => handleRoleChange('employee')}
+                        style={{
+                          border: selectedRole === 'employee' ? '3px solid #007bff' : '2px solid #ddd',
+                          borderRadius: '12px',
+                          padding: '25px',
+                          margin: '15px auto',
+                          cursor: 'pointer',
+                          backgroundColor: selectedRole === 'employee' ? '#f0f8ff' : '#f8f9fa',
+                          color: '#333',
+                          transition: 'all 0.3s ease',
+                          maxWidth: '300px',
+                          boxShadow: selectedRole === 'employee' ? '0 4px 12px rgba(0,123,255,0.3)' : '0 2px 8px rgba(0,0,0,0.1)'
+                        }}
+                      >
+                        <h4 style={{ margin: '0 0 10px 0', color: selectedRole === 'employee' ? '#007bff' : '#333' }}>
+                          👤 Employee
+                        </h4>
+                        <p style={{ margin: '0', fontSize: '14px', color: '#666' }}>
+                          Fill out as a regular employee
+                        </p>
+                      </div>
+                      
+                      <div 
+                        className={`role-option ${selectedRole === 'team_lead' ? 'selected' : ''}`}
+                        onClick={() => handleRoleChange('team_lead')}
+                        style={{
+                          border: selectedRole === 'team_lead' ? '3px solid #007bff' : '2px solid #ddd',
+                          borderRadius: '12px',
+                          padding: '25px',
+                          margin: '15px auto',
+                          cursor: 'pointer',
+                          backgroundColor: selectedRole === 'team_lead' ? '#f0f8ff' : '#f8f9fa',
+                          color: '#333',
+                          transition: 'all 0.3s ease',
+                          maxWidth: '300px',
+                          boxShadow: selectedRole === 'team_lead' ? '0 4px 12px rgba(0,123,255,0.3)' : '0 2px 8px rgba(0,0,0,0.1)'
+                        }}
+                      >
+                        <h4 style={{ margin: '0 0 10px 0', color: selectedRole === 'team_lead' ? '#007bff' : '#333' }}>
+                          👑 Team Lead
+                        </h4>
+                        <p style={{ margin: '0', fontSize: '14px', color: '#666' }}>
+                          Fill out as a team leader
+                        </p>
+                      </div>
 
-                {/* Back Button */}
-                <div style={{ marginBottom: '20px' }}>
+                      <div 
+                        className={`role-option ${selectedRole === 'management' ? 'selected' : ''}`}
+                        onClick={() => handleRoleChange('management')}
+                        style={{
+                          border: selectedRole === 'management' ? '3px solid #007bff' : '2px solid #ddd',
+                          borderRadius: '12px',
+                          padding: '25px',
+                          margin: '15px auto',
+                          cursor: 'pointer',
+                          backgroundColor: selectedRole === 'management' ? '#f0f8ff' : '#f8f9fa',
+                          color: '#333',
+                          transition: 'all 0.3s ease',
+                          maxWidth: '300px',
+                          boxShadow: selectedRole === 'management' ? '0 4px 12px rgba(0,123,255,0.3)' : '0 2px 8px rgba(0,0,0,0.1)'
+                        }}
+                      >
+                        <h4 style={{ margin: '0 0 10px 0', color: selectedRole === 'management' ? '#007bff' : '#333' }}>
+                          👥 Management
+                        </h4>
+                        <p style={{ margin: '0', fontSize: '14px', color: '#666' }}>
+                          Evaluate team members (round-robin assessment)
+                        </p>
+                      </div>
+                    </div>
+
+                    {loadingSections && (
+                      <div style={{ 
+                        marginTop: '20px', 
+                        padding: '15px', 
+                        backgroundColor: '#fff3cd', 
+                        borderRadius: '8px',
+                        border: '1px solid #ffeaa7',
+                        color: '#856404'
+                      }}>
+                        <div className="spinner-border spinner-border-sm" role="status" style={{ marginRight: '10px' }}>
+                          <span className="sr-only">Loading...</span>
+                        </div>
+                        <strong>Loading sections for {selectedRole === 'employee' ? 'Employee' : selectedRole === 'team_lead' ? 'Team Lead' : 'Management'}...</strong>
+                      </div>
+                    )}
+
+                    {selectedRole && !loadingSections && (
+                      conditionalSections.sections && conditionalSections.sections.length > 0 ? (
+                        <div style={{ 
+                          marginTop: '15px', 
+                          padding: '15px', 
+                          backgroundColor: '#d4edda', 
+                          borderRadius: '8px',
+                          border: '1px solid #c3e6cb',
+                          color: '#155724'
+                        }}>
+                          <strong>✅ Perfect! Ready to continue</strong><br/>
+                          <span style={{ fontSize: '14px' }}>
+                            {conditionalSections.sections.length} section(s) with {conditionalSections.questions.length} question(s) will be shown 
+                            based on your year ({selectedYear}) and role ({selectedRole === 'employee' ? 'Employee' : selectedRole === 'team_lead' ? 'Team Lead' : 'Management'}).
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ 
+                          marginTop: '15px', 
+                          padding: '15px', 
+                          backgroundColor: '#fff3cd', 
+                          borderRadius: '8px',
+                          border: '1px solid #ffeaa7',
+                          color: '#856404'
+                        }}>
+                          <strong>⚠️ No matching sections!</strong><br/>
+                          <span style={{ fontSize: '14px' }}>
+                            No sections match your year ({selectedYear}) and role ({selectedRole === 'employee' ? 'Employee' : selectedRole === 'team_lead' ? 'Team Lead' : 'Management'}) combination. 
+                            Please try different selections or contact the form administrator.
+                          </span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+                
+                <div style={{ marginTop: '25px', textAlign: 'center' }}>
                   <button
                     type="button"
                     onClick={handleBackToYear}
-                    className="btn btn-outline-secondary"
-                    style={{ fontSize: '14px' }}
+                    className="btn btn-secondary"
+                    style={{
+                      padding: '12px 30px',
+                      fontSize: '16px',
+                      marginRight: '15px'
+                    }}
                   >
-                    ← Back to Year Selection
+                    ← Back to Year
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRoleNext}
+                    disabled={!selectedRole || loadingSections}
+                    className="btn btn-primary"
+                    style={{
+                      padding: '12px 30px',
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      opacity: (!selectedRole || loadingSections) ? 0.6 : 1,
+                      cursor: (!selectedRole || loadingSections) ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {!selectedRole ? 'Please Select Role First' : 
+                     loadingSections ? '🔄 Loading Sections...' :
+                     `Next: Continue to Questions →`}
                   </button>
                 </div>
+              </div>
+            )}
 
-                {/* Questions based on selected year */}
-                {getQuestionsToShow().length > 0 ? (
-                  getQuestionsToShow().map((question, index) => (
-                    <div key={question.id} className="form-section">
-                      <div className="form-group">
-                        <label className="form-label">
-                          {form.form_type === 'assessment' ? (
-                            <div>
-                              <div style={{ marginBottom: '3px' }}>
-                                {question.question_text}
-                              </div>
-                              {question.question_text_id && (
-                                <div style={{ fontSize: '14px', color: '#6c757d', fontStyle: 'italic' }}>
-                                  {question.question_text_id}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            question.question_text
-                          )}
-                          {question.is_required && (
-                            <span style={{ color: '#dc3545', marginLeft: '5px' }}>*</span>
-                          )}
-                        </label>
-                        
-                        {renderQuestion(question)}
+            {/* Step 3: Form Questions */}
+            {currentStep === 3 && (
+              <form onSubmit={handleSubmit}>
+                {/* Management Round-Robin Flow */}
+                {isManagementFlow && managementNames.length > 0 ? (
+                  <div>
+                    <div style={{ 
+                      marginBottom: '20px', 
+                      padding: '20px', 
+                      backgroundColor: '#f0f8ff', 
+                      borderRadius: '8px',
+                      border: '2px solid #007bff'
+                    }}>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#007bff' }}>
+                        🏢 Management Evaluation - Round-Robin Assessment
+                      </h4>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <p style={{ margin: '0 0 5px 0', fontSize: '16px', fontWeight: 'bold' }}>
+                            Currently Evaluating: <span style={{ color: '#007bff' }}>{managementNames[currentPersonIndex]}</span>
+                          </p>
+                          <p style={{ margin: '0', fontSize: '14px', color: '#6c757d' }}>
+                            Section {currentSectionForPerson + 1} of {Object.keys(getQuestionsBySections()).length} 
+                            • Person {currentPersonIndex + 1} of {managementNames.length}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>Progress</div>
+                          <div style={{ 
+                            width: '100px', 
+                            height: '8px', 
+                            backgroundColor: '#e9ecef', 
+                            borderRadius: '4px',
+                            overflow: 'hidden'
+                          }}>
+                            <div style={{
+                              width: `${((currentPersonIndex * Object.keys(getQuestionsBySections()).length + currentSectionForPerson + 1) / (Object.keys(getQuestionsBySections()).length * managementNames.length)) * 100}%`,
+                              height: '100%',
+                              backgroundColor: '#007bff',
+                              transition: 'width 0.3s ease'
+                            }}></div>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  ))
+
+                    {/* Render current section questions for current person */}
+                    {(() => {
+                      const questionsBySection = getQuestionsBySections();
+                      const sectionNames = Object.keys(questionsBySection);
+                      const currentSectionName = sectionNames[currentSectionForPerson];
+                      const currentQuestions = questionsBySection[currentSectionName] || [];
+                      
+                      return (
+                        <div>
+                          <h3 style={{ color: '#333', marginBottom: '20px' }}>
+                             Evaluating: <span style={{ color: '#007bff', fontWeight: 'bold' }}>{managementNames[currentPersonIndex]}</span> 
+                            -📂 {currentSectionName}
+                          </h3>
+                          <div style={{ 
+                            marginBottom: '15px', 
+                            padding: '10px', 
+                            backgroundColor: '#f8f9fa', 
+                            borderRadius: '5px',
+                            fontSize: '14px',
+                            color: '#6c757d'
+                          }}>
+                            Complete all sections for {managementNames[currentPersonIndex]} before moving to the next person
+                          </div>
+                          
+                          {currentQuestions.map((question, qIndex) => (
+                            <div key={`${question.id}_${currentPersonIndex}_${currentSectionForPerson}`} className="question-item" style={{
+                              marginBottom: '25px',
+                              padding: '20px',
+                              border: '2px solid #e9ecef',
+                              borderRadius: '8px',
+                              backgroundColor: '#fff'
+                            }}>
+                              <label className="form-label" style={{ fontWeight: 'bold', marginBottom: '10px' }}>
+                                {qIndex + 1}. {question.question_text}
+                                {question.is_required && <span style={{ color: 'red' }}> *</span>}
+                              </label>
+                              {renderQuestion(question)}
+                            </div>
+                          ))}
+                          
+                          {/* Navigation for Management Flow */}
+                          <div style={{ 
+                            marginTop: '30px', 
+                            padding: '20px', 
+                            backgroundColor: '#f8f9fa', 
+                            borderRadius: '8px',
+                            display: 'flex', 
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}>
+                            <button
+                              type="button"
+                              onClick={handleManagementPrevious}
+                              disabled={currentPersonIndex === 0 && currentSectionForPerson === 0}
+                              className="btn btn-secondary"
+                              style={{ 
+                                padding: '12px 20px', 
+                                fontSize: '14px',
+                                opacity: (currentPersonIndex === 0 && currentSectionForPerson === 0) ? 0.5 : 1
+                              }}
+                            >
+                              ← Previous
+                            </button>
+                            
+                            <div style={{ textAlign: 'center', fontSize: '14px', color: '#6c757d' }}>
+                              {managementNames[currentPersonIndex]} - Section {currentSectionForPerson + 1}
+                            </div>
+                            
+                            {/* Check if this is the last person in the last section */}
+                            {currentPersonIndex === managementNames.length - 1 && 
+                             currentSectionForPerson === Object.keys(getQuestionsBySections()).length - 1 ? (
+                              <button
+                                type="submit"
+                                className="btn btn-success"
+                                disabled={submitting}
+                                style={{ 
+                                  padding: '12px 30px',
+                                  fontSize: '16px',
+                                  fontWeight: 'bold'
+                                }}
+                              >
+                                {submitting ? 'Submitting...' : 'Complete Assessment 🚀'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleManagementNext}
+                                className="btn btn-primary"
+                                style={{ 
+                                  padding: '12px 20px', 
+                                  fontSize: '14px',
+                                  fontWeight: '600'
+                                }}
+                              >
+                                Next →
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  /* Regular Employee/Team Lead Flow */
+                  <div>
+                    <div style={{ 
+                      marginBottom: '20px', 
+                      padding: '15px', 
+                      backgroundColor: '#e3f2fd', 
+                      borderRadius: '8px',
+                      border: '1px solid #bbdefb'
+                    }}>
+                      <h4 style={{ margin: '0 0 8px 0', color: '#1976d2' }}>
+                        📋 Form Questions - {selectedRole === 'employee' ? 'Employee' : selectedRole === 'team_lead' ? 'Team Lead' : 'Management'} ({selectedYear})
+                      </h4>
+                      <p style={{ margin: '0', fontSize: '14px', color: '#424242' }}>
+                        Answer the questions below based on your selected role and year.
+                      </p>
+                    </div>
+
+                    {/* Back Button */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <button
+                        type="button"
+                        onClick={handleBackToRole}
+                        className="btn btn-outline-secondary"
+                        style={{ fontSize: '14px' }}
+                      >
+                        ← Back to Role Selection
+                      </button>
+                    </div>
+
+                    {/* Section-by-section navigation for regular flow */}
+                    {getQuestionsToShow().length > 0 ? (
+                  (() => {
+                    const questionsBySection = getQuestionsBySections();
+                    let sectionNames = Object.keys(questionsBySection);
+                    
+                    // Handle case where no sections exist
+                    if (sectionNames.length === 0) {
+                      const allQuestions = getQuestionsToShow();
+                      if (allQuestions.length === 0) return null;
+                      sectionNames = ['Form Questions'];
+                    }
+                    
+                    const { sectionName, questions } = getCurrentSectionData();
+                    
+                    return (
+                      <div>
+                        {/* Section Progress Indicator */}
+                        <div className="section-progress">
+                          <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+                            <h4>
+                              📋 Section {currentSectionIndex + 1} of {sectionNames.length}
+                            </h4>
+                            <p style={{ margin: '5px 0 0 0', fontSize: '14px', opacity: 0.9 }}>
+                              Complete all questions in this section to continue
+                            </p>
+                          </div>
+                          
+                          {/* Progress Bar */}
+                          <div className="section-progress-bar">
+                            <div 
+                              className="section-progress-fill"
+                              style={{
+                                width: `${((currentSectionIndex + 1) / sectionNames.length) * 100}%`
+                              }}
+                            ></div>
+                          </div>
+                          
+                          {/* Section Names */}
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            fontSize: '12px',
+                            color: '#666'
+                          }}>
+                            {sectionNames.map((name, index) => (
+                              <span key={index} style={{
+                                fontWeight: index === currentSectionIndex ? 'bold' : 'normal',
+                                color: index === currentSectionIndex ? '#1976d2' : '#666'
+                              }}>
+                                {index + 1}. {name.length > 20 ? name.substring(0, 17) + '...' : name}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Current Section */}
+                        <div style={{ marginBottom: '40px' }}>
+                          {/* Section Header */}
+                          <div className="section-header">
+                            <h3 style={{
+                              margin: 0,
+                              color: '#495057',
+                              fontSize: '24px',
+                              fontWeight: '700'
+                            }}>
+                              {sectionName}
+                            </h3>
+                            <p style={{
+                              margin: '8px 0 0 0',
+                              color: '#6c757d',
+                              fontSize: '14px'
+                            }}>
+                              {questions.length} question{questions.length !== 1 ? 's' : ''} in this section
+                            </p>
+                          </div>
+
+                          {/* Questions in current section */}
+                          {questions.map((question, index) => (
+                            <div key={question.id} className="section-question">
+                              <div className="form-group">
+                                <label className="form-label" style={{ fontSize: '16px', fontWeight: '600' }}>
+                                  <span style={{ 
+                                    color: '#007bff', 
+                                    fontSize: '14px', 
+                                    fontWeight: '500',
+                                    marginRight: '8px' 
+                                  }}>
+                                    Q{index + 1}.
+                                  </span>
+                                  {form.form_type === 'assessment' ? (
+                                    <div>
+                                      <div style={{ marginBottom: '3px' }}>
+                                        {question.question_text}
+                                      </div>
+                                      {question.question_text_id && (
+                                        <div style={{ fontSize: '14px', color: '#6c757d', fontStyle: 'italic' }}>
+                                          {question.question_text_id}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    question.question_text
+                                  )}
+                                  {question.is_required && (
+                                    <span style={{ color: '#dc3545', marginLeft: '5px' }}>*</span>
+                                  )}
+                                </label>
+                                
+                                <div style={{ marginTop: '12px' }}>
+                                  {renderQuestion(question)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Navigation Buttons */}
+                        <div className="section-navigation">
+                          <div>
+                            {currentSectionIndex > 0 && (
+                              <button
+                                type="button"
+                                onClick={handlePreviousSection}
+                                className="btn btn-secondary"
+                                style={{ padding: '12px 20px', fontSize: '14px' }}
+                              >
+                                ← Previous Section
+                              </button>
+                            )}
+                          </div>
+                          
+                          <div style={{ flex: 1, textAlign: 'center', margin: '0 20px' }}>
+                            <span style={{ fontSize: '14px', color: '#6c757d' }}>
+                              Section {currentSectionIndex + 1} of {sectionNames.length}
+                            </span>
+                          </div>
+                          
+                          <div>
+                            {!isLastSection() ? (
+                              <button
+                                type="button"
+                                onClick={handleNextSection}
+                                className="btn btn-primary"
+                                style={{ 
+                                  padding: '12px 20px', 
+                                  fontSize: '14px',
+                                  fontWeight: '600'
+                                }}
+                              >
+                                Next Section →
+                              </button>
+                            ) : (
+                              <button
+                                type="submit"
+                                className="btn btn-success"
+                                disabled={submitting}
+                                style={{ 
+                                  padding: '12px 30px',
+                                  fontSize: '16px',
+                                  fontWeight: 'bold'
+                                }}
+                              >
+                                {submitting ? 'Submitting...' : 'Submit Form 🚀'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
                 ) : (
                   <div style={{
                     textAlign: 'center',
@@ -769,21 +1827,8 @@ const FormFiller = () => {
                     </div>
                   </div>
                 )}
-
-                <div style={{ marginTop: '30px', textAlign: 'center' }}>
-                  <button
-                    type="submit"
-                    className="btn btn-success"
-                    disabled={submitting}
-                    style={{ 
-                      padding: '12px 30px',
-                      fontSize: '16px',
-                      fontWeight: 'bold'
-                    }}
-                  >
-                    {submitting ? 'Submitting...' : 'Submit Form'}
-                  </button>
-                </div>
+                  </div>
+                )}
               </form>
             )}
           </>

@@ -527,6 +527,88 @@ const ensureSchemaUpdates = async () => {
     } catch (err) {
       console.log('ℹ️  scale_order column already exists or error:', err.message);
     }
+
+    // Add sections table for organizing questions into sections
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS form_sections (
+          id SERIAL PRIMARY KEY,
+          form_id INTEGER REFERENCES forms(id) ON DELETE CASCADE,
+          section_name VARCHAR(255) NOT NULL,
+          section_description TEXT,
+          order_number INTEGER NOT NULL,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('✅ Created form_sections table');
+    } catch (err) {
+      console.log('ℹ️  form_sections table already exists or error:', err.message);
+    }
+
+    // Add section_id column to form_questions if it doesn't exist
+    try {
+      await pool.query(`
+        ALTER TABLE form_questions 
+        ADD COLUMN IF NOT EXISTS section_id INTEGER REFERENCES form_sections(id) ON DELETE SET NULL
+      `);
+      console.log('✅ Added section_id column to form_questions table');
+    } catch (err) {
+      console.log('ℹ️  section_id column already exists or error:', err.message);
+    }
+
+    // Add conditional_sections table for section-based conditional logic
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS conditional_sections (
+          id SERIAL PRIMARY KEY,
+          form_id INTEGER REFERENCES forms(id) ON DELETE CASCADE,
+          condition_name VARCHAR(100),
+          condition_type VARCHAR(50) NOT NULL,
+          condition_value JSONB NOT NULL,
+          section_ids INTEGER[] NOT NULL,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('✅ Created conditional_sections table');
+    } catch (err) {
+      console.log('ℹ️  conditional_sections table already exists or error:', err.message);
+    }
+
+    // Add role_based_conditional_sections table for role-based conditional logic
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS role_based_conditional_sections (
+          id SERIAL PRIMARY KEY,
+          form_id INTEGER REFERENCES forms(id) ON DELETE CASCADE,
+          condition_name VARCHAR(100),
+          condition_type VARCHAR(50) NOT NULL,
+          condition_value VARCHAR(100) NOT NULL,
+          section_ids INTEGER[] NOT NULL,
+          management_names TEXT, -- For storing list of names when condition_value is 'management'
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('✅ Created role_based_conditional_sections table');
+    } catch (err) {
+      console.log('ℹ️  role_based_conditional_sections table already exists or error:', err.message);
+    }
+    
+    // Add management_names column if it doesn't exist (for existing tables)
+    try {
+      await pool.query(`
+        ALTER TABLE role_based_conditional_sections 
+        ADD COLUMN IF NOT EXISTS management_names TEXT
+      `);
+      console.log('✅ Added management_names column to role_based_conditional_sections');
+    } catch (err) {
+      console.log('ℹ️  management_names column already exists or error:', err.message);
+    }
     
     console.log('✅ Schema updates completed');
     

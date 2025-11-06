@@ -32,8 +32,17 @@ export const adminAPI = {
   updateForm: (formId, formData) => api.put(`/api/admin/forms/${formId}`, formData),
   deleteForm: (formId) => api.delete(`/api/admin/forms/${formId}`),
   getFormResponses: (formId) => api.get(`/api/admin/forms/${formId}/responses`),
-  exportFormResponses: (formId) => {
-    return api.get(`/api/admin/forms/${formId}/export`, {
+  exportFormResponses: (formId, filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.role) params.append('role', filters.role);
+    if (filters.year) params.append('year', filters.year);
+    
+    const queryString = params.toString();
+    const url = queryString ? 
+      `/api/admin/forms/${formId}/export?${queryString}` : 
+      `/api/admin/forms/${formId}/export`;
+    
+    return api.get(url, {
       responseType: 'blob',
     });
   },
@@ -55,6 +64,12 @@ export const formAPI = {
   submitForm: (uniqueLink, data) => api.post(`/api/form/${uniqueLink}/submit`, data),
   getConditionalQuestions: (uniqueLink, selectedYear) => 
     api.post(`/api/form/${uniqueLink}/conditional-questions`, { selectedYear }),
+  getConditionalSections: (uniqueLink, selectedYear) => 
+    api.post(`/api/form/${uniqueLink}/conditional-sections`, { selectedYear }),
+  getRoleBasedSections: (uniqueLink, selectedRole) => 
+    api.post(`/api/form/${uniqueLink}/role-based-sections`, { selectedRole }),
+  getCombinedConditionalSections: (uniqueLink, selectedYear, selectedRole) => 
+    api.post(`/api/form/${uniqueLink}/combined-conditional-sections`, { selectedYear, selectedRole }),
 };
 
 export default api;

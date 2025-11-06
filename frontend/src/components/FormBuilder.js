@@ -12,11 +12,16 @@ const FormBuilder = () => {
     form_type: 'standard'
   });
   const [questions, setQuestions] = useState([]);
+  const [sections, setSections] = useState([]);
   const [conditionalQuestions, setConditionalQuestions] = useState([]);
+  const [conditionalSections, setConditionalSections] = useState([]);
+  const [roleBasedConditionalSections, setRoleBasedConditionalSections] = useState([]);
+  const [managementNames, setManagementNames] = useState({}); // Store names for each Management role condition
   const [loading, setLoading] = useState(false);
   const [loadingForm, setLoadingForm] = useState(isEditMode);
   const [error, setError] = useState('');
   const [collapsedQuestions, setCollapsedQuestions] = useState(new Set());
+  const [collapsedSections, setCollapsedSections] = useState(new Set());
   const [previewMode, setPreviewMode] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [scaleOrderMode, setScaleOrderMode] = useState(false);
@@ -68,10 +73,29 @@ const FormBuilder = () => {
         form_type: response.data.form_type
       });
       
-      setQuestions(response.data.questions || []);
+      // Ensure questions have proper structure with null-safe options
+      const loadedQuestions = (response.data.questions || []).map(q => ({
+        ...q,
+        options: q.options || []
+      }));
+      
+      // Map database sections to frontend format
+      const loadedSections = (response.data.sections || []).map(section => ({
+        ...section,
+        name: section.name || section.section_name, // Map section_name to name for frontend
+        description: section.description || section.section_description || ''
+      }));
+
+      setQuestions(loadedQuestions);
+      setSections(loadedSections);
       setConditionalQuestions(response.data.conditional_questions || []);
+      setConditionalSections(response.data.conditional_sections || []);
+      setRoleBasedConditionalSections(response.data.role_based_conditional_sections || []);
       console.log('📋 Set questions:', response.data.questions?.length || 0);
+      console.log('📂 Set sections:', response.data.sections?.length || 0);
       console.log('🔀 Set conditional questions:', response.data.conditional_questions?.length || 0);
+      console.log('🔀 Set conditional sections:', response.data.conditional_sections?.length || 0);
+      console.log('👤 Set role-based conditional sections:', response.data.role_based_conditional_sections?.length || 0);
     } catch (error) {
       console.error('❌ Error loading form:', error);
       setError('Failed to load form data: ' + (error.response?.data?.error || error.message));
@@ -87,8 +111,68 @@ const FormBuilder = () => {
     }
   };
 
+  // Add new section
+  const addSection = () => {
+    const newSection = {
+      id: Date.now(),
+      name: `Section ${sections.length + 1}`,
+      description: ''
+    };
+    setSections([...sections, newSection]);
+  };
+
+  // Update section
+  const updateSection = (index, field, value) => {
+    const updatedSections = [...sections];
+    updatedSections[index][field] = value;
+    setSections(updatedSections);
+  };
+
+  // Remove section
+  const removeSection = (index) => {
+    const sectionToRemove = sections[index];
+    
+    // Remove section assignment from questions that belong to this section
+    const updatedQuestions = questions.map(q => 
+      q.section_id === sectionToRemove.id ? { ...q, section_id: null } : q
+    );
+    setQuestions(updatedQuestions);
+    
+    // Remove the section
+    setSections(sections.filter((_, i) => i !== index));
+  };
+
+  // Move section up
+  const moveSectionUp = (index) => {
+    if (index > 0) {
+      const updatedSections = [...sections];
+      [updatedSections[index], updatedSections[index - 1]] = [updatedSections[index - 1], updatedSections[index]];
+      setSections(updatedSections);
+    }
+  };
+
+  // Move section down
+  const moveSectionDown = (index) => {
+    if (index < sections.length - 1) {
+      const updatedSections = [...sections];
+      [updatedSections[index], updatedSections[index + 1]] = [updatedSections[index + 1], updatedSections[index]];
+      setSections(updatedSections);
+    }
+  };
+
+  // Toggle section collapse
+  const toggleSectionCollapse = (sectionId) => {
+    const newCollapsed = new Set(collapsedSections);
+    if (newCollapsed.has(sectionId)) {
+      newCollapsed.delete(sectionId);
+    } else {
+      newCollapsed.add(sectionId);
+    }
+    setCollapsedSections(newCollapsed);
+  };
+
   // Add new question
-  const addQuestion = () => {
+  const addQuestion = (sectionId = null) => {
     const newQuestion = {
       id: Date.now(),
       question_text: '',
@@ -99,7 +183,8 @@ const FormBuilder = () => {
       right_statement: '',
       left_statement_id: '',
       right_statement_id: '',
-      is_required: false
+      is_required: false,
+      section_id: sectionId
     };
     setQuestions([...questions, newQuestion]);
   };
@@ -225,6 +310,69 @@ const FormBuilder = () => {
     setConditionalQuestions(updated);
   };
 
+  // Add conditional section set
+  const addConditionalSection = () => {
+    const newConditional = {
+      condition_name: `Condition ${conditionalSections.length + 1}`,
+      condition_type: 'year_equals',
+      condition_value: '2024',
+      section_ids: []
+    };
+    setConditionalSections([...conditionalSections, newConditional]);
+  };
+
+  // Update conditional section
+  const updateConditionalSection = (index, field, value) => {
+    const updated = [...conditionalSections];
+    updated[index][field] = value;
+    
+    // Initialize between condition format
+    if (field === 'condition_type' && value === 'year_between') {
+      updated[index].condition_value = '2020-2024';
+    }
+    
+    setConditionalSections(updated);
+  };
+
+  // Remove conditional section
+  const removeConditionalSection = (index) => {
+    setConditionalSections(conditionalSections.filter((_, i) => i !== index));
+  };
+
+  // Update conditional section IDs
+  const updateConditionalSectionIds = (condIndex, sectionIds) => {
+    const updated = [...conditionalSections];
+    updated[condIndex].section_ids = sectionIds;
+    setConditionalSections(updated);
+  };
+
+  // Role-based conditional section functions
+  const addRoleBasedConditionalSection = () => {
+    const newRoleCondition = {
+      condition_name: `Role Condition ${roleBasedConditionalSections.length + 1}`,
+      condition_type: 'role_equals',
+      condition_value: 'employee',
+      section_ids: []
+    };
+    setRoleBasedConditionalSections([...roleBasedConditionalSections, newRoleCondition]);
+  };
+
+  const updateRoleBasedConditionalSection = (index, field, value) => {
+    const updated = [...roleBasedConditionalSections];
+    updated[index][field] = value;
+    setRoleBasedConditionalSections(updated);
+  };
+
+  const removeRoleBasedConditionalSection = (index) => {
+    setRoleBasedConditionalSections(roleBasedConditionalSections.filter((_, i) => i !== index));
+  };
+
+  const updateRoleBasedConditionalSectionIds = (condIndex, sectionIds) => {
+    const updated = [...roleBasedConditionalSections];
+    updated[condIndex].section_ids = sectionIds;
+    setRoleBasedConditionalSections(updated);
+  };
+
   // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -241,17 +389,30 @@ const FormBuilder = () => {
       }
 
       // Prepare questions data
-      const questionsData = questions.map((q, index) => ({
+      const questionsData = (questions || []).map((q, index) => ({
         ...q,
         order_number: index + 1,
         options: q.options && q.options.length > 0 ? q.options : null
       }));
 
+      // Prepare role-based conditional sections with management names
+      const roleBasedConditionalSectionsWithNames = roleBasedConditionalSections.map((rbcs, index) => ({
+        ...rbcs,
+        management_names: rbcs.condition_value === 'management' ? managementNames[index] : null
+      }));
+
       const payload = {
         ...formData,
         questions: questionsData,
-        conditionalQuestions: conditionalQuestions
+        sections: sections,
+        conditionalQuestions: conditionalQuestions,
+        conditionalSections: conditionalSections,
+        roleBasedConditionalSections: roleBasedConditionalSectionsWithNames
       };
+
+      console.log('FormBuilder sending sections:', JSON.stringify(sections, null, 2));
+      console.log('FormBuilder sending conditional sections:', JSON.stringify(conditionalSections, null, 2));
+      console.log('FormBuilder sending role-based conditional sections:', JSON.stringify(roleBasedConditionalSections, null, 2));
 
       if (isEditMode) {
         await adminAPI.updateForm(formId, payload);
@@ -391,8 +552,8 @@ const FormBuilder = () => {
                     <br />Default order: 1, 2, 3, 4, 5 (Strongly Disagree → Strongly Agree)
                   </p>
                   
-                  {assessmentQuestions.length > 0 ? (
-                    assessmentQuestions.map(question => (
+                  {(assessmentQuestions || []).length > 0 ? (
+                    (assessmentQuestions || []).map(question => (
                       <ScaleOrderEditor
                         key={question.id}
                         question={question}
@@ -432,7 +593,7 @@ const FormBuilder = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCollapsedQuestions(new Set(questions.map(q => q.id)))}
+                    onClick={() => setCollapsedQuestions(new Set((questions || []).map(q => q.id)))}
                     className="btn btn-sm btn-outline-secondary"
                   >
                     📖 Collapse All
@@ -440,7 +601,7 @@ const FormBuilder = () => {
                 </div>
               )}
             </div>
-            {questions.map((question, qIndex) => (
+            {(questions || []).map((question, qIndex) => (
               <div key={question.id} className="question-builder" style={{
                 border: '2px solid #e9ecef',
                 borderRadius: '10px',
@@ -589,6 +750,28 @@ const FormBuilder = () => {
                   </select>
                 </div>
 
+                {/* Section Assignment */}
+                {sections.length > 0 && (
+                  <div className="form-group">
+                    <label className="form-label">Assign to Section:</label>
+                    <select
+                      value={question.section_id || ''}
+                      onChange={(e) => updateQuestion(qIndex, 'section_id', e.target.value || null)}
+                      className="form-select"
+                    >
+                      <option value="">No Section (Unassigned)</option>
+                      {sections.map(section => (
+                        <option key={section.id} value={section.id}>
+                          📂 {section.name}
+                        </option>
+                      ))}
+                    </select>
+                    <small className="form-text text-muted">
+                      Select a section to organize this question, or leave unassigned.
+                    </small>
+                  </div>
+                )}
+
                 {/* Assessment type specific fields */}
                 {question.question_type === 'assessment' && (
                   <>
@@ -640,7 +823,7 @@ const FormBuilder = () => {
                   <div className="form-group">
                     <label className="form-label">Options:</label>
                     <div className="options-list">
-                      {question.options.map((option, oIndex) => (
+                      {(question.options || []).map((option, oIndex) => (
                         <div key={oIndex} className="option-item">
                           <input
                             type="text"
@@ -722,6 +905,145 @@ const FormBuilder = () => {
                 ➕ Add New Question
               </button>
             </div>
+
+            {/* Sections Management */}
+            <div style={{
+              border: '2px solid #e9ecef',
+              borderRadius: '10px',
+              padding: '20px',
+              marginBottom: '20px',
+              backgroundColor: '#f8f9fa'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                <div>
+                  <h4 style={{ margin: '0 0 5px 0', color: '#6f42c1' }}>
+                    📂 Form Sections
+                  </h4>
+                  <p style={{ margin: '0', color: '#6c757d', fontSize: '14px' }}>
+                    Organize your questions into sections. Questions can be assigned to sections for better organization.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={addSection}
+                  className="btn btn-outline-primary"
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '14px',
+                    borderRadius: '6px'
+                  }}
+                >
+                  ➕ Add Section
+                </button>
+              </div>
+
+              {sections.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '30px',
+                  color: '#6c757d',
+                  fontStyle: 'italic'
+                }}>
+                  No sections created yet. Add a section to organize your questions.
+                </div>
+              ) : (
+                <div>
+                  {(sections || []).map((section, sIndex) => (
+                    <div key={section.id} style={{
+                      border: '1px solid #dee2e6',
+                      borderRadius: '8px',
+                      marginBottom: '15px',
+                      backgroundColor: 'white'
+                    }}>
+                      <div style={{
+                        padding: '15px',
+                        borderBottom: collapsedSections.has(section.id) ? 'none' : '1px solid #dee2e6',
+                        backgroundColor: '#f8f9fa',
+                        borderRadius: collapsedSections.has(section.id) ? '8px' : '8px 8px 0 0'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ flex: 1 }}>
+                            <h5 style={{ margin: '0 0 5px 0', color: '#495057' }}>
+                              📂 Section {sIndex + 1}
+                            </h5>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                              <input
+                                type="text"
+                                value={section.name}
+                                onChange={(e) => updateSection(sIndex, 'name', e.target.value)}
+                                placeholder="Section name"
+                                className="form-input"
+                                style={{ minWidth: '200px' }}
+                              />
+                              <input
+                                type="text"
+                                value={section.description}
+                                onChange={(e) => updateSection(sIndex, 'description', e.target.value)}
+                                placeholder="Section description (optional)"
+                                className="form-input"
+                                style={{ minWidth: '300px' }}
+                              />
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '5px', marginLeft: '15px' }}>
+                            <button
+                              type="button"
+                              onClick={() => toggleSectionCollapse(section.id)}
+                              className="btn btn-sm btn-outline-secondary"
+                              title={collapsedSections.has(section.id) ? 'Expand' : 'Collapse'}
+                            >
+                              {collapsedSections.has(section.id) ? '📖' : '📕'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => addQuestion(section.id)}
+                              className="btn btn-sm btn-success"
+                              title="Add question to this section"
+                            >
+                              ➕
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveSectionUp(sIndex)}
+                              disabled={sIndex === 0}
+                              className="btn btn-sm btn-outline-primary"
+                              title="Move up"
+                            >
+                              ⬆️
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveSectionDown(sIndex)}
+                              disabled={sIndex === sections.length - 1}
+                              className="btn btn-sm btn-outline-primary"
+                              title="Move down"
+                            >
+                              ⬇️
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeSection(sIndex)}
+                              className="btn btn-sm btn-outline-danger"
+                              title="Delete section"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {!collapsedSections.has(section.id) && (
+                        <div style={{ padding: '15px' }}>
+                          <p style={{ margin: '0', fontSize: '13px', color: '#6c757d' }}>
+                            Questions in this section: {questions.filter(q => q.section_id === section.id).length}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             
             {questions.length === 0 && (
               <div style={{
@@ -756,7 +1078,7 @@ const FormBuilder = () => {
               </p>
             </div>
 
-            {conditionalQuestions.map((cond, cIndex) => (
+            {(conditionalQuestions || []).map((cond, cIndex) => (
               <div key={cIndex} style={{
                 border: '2px solid #e9ecef',
                 borderRadius: '10px',
@@ -906,7 +1228,7 @@ const FormBuilder = () => {
                           type="button"
                           onClick={() => {
                             // Use actual question IDs if available, otherwise use index + 1
-                            const allIds = questions.map((q, index) => q.id || (index + 1));
+                            const allIds = (questions || []).map((q, index) => q.id || (index + 1));
                             updateConditionalQuestionIds(cIndex, allIds);
                           }}
                           style={{
@@ -939,7 +1261,7 @@ const FormBuilder = () => {
                         </button>
                       </div>
                       
-                      {questions.map((q, qIndex) => {
+                      {(questions || []).map((q, qIndex) => {
                         // Use actual question ID if available (when editing), otherwise use index + 1 (when creating)
                         const questionId = q.id || (qIndex + 1);
                         
@@ -1015,6 +1337,518 @@ const FormBuilder = () => {
             </div>
           </div>
 
+          {/* Section-Based Conditional Logic */}
+          <div className="card">
+            <h2>📂 Section-Based Conditional Logic</h2>
+            <div style={{ 
+              backgroundColor: '#e8f5e8', 
+              padding: '15px', 
+              borderRadius: '8px', 
+              marginBottom: '20px',
+              border: '1px solid #c3e6cb'
+            }}>
+              <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>✨ New Feature: Section-Based Logic!</h4>
+              <p style={{ margin: '0', color: '#155724', fontSize: '14px' }}>
+                Instead of selecting individual questions, you can now select entire <strong>sections</strong> to show based on year conditions. 
+                This makes it much easier to manage large forms with many questions organized into sections.
+                <br/><strong>Example:</strong> Show "Employee Information" and "Performance Review" sections only to users who joined before 2023.
+              </p>
+            </div>
+
+            {(conditionalSections || []).map((cond, cIndex) => (
+              <div key={cIndex} style={{
+                border: '2px solid #28a745',
+                borderRadius: '10px',
+                padding: '20px',
+                marginBottom: '20px',
+                backgroundColor: '#f8fff8'
+              }}>
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  marginBottom: '20px'
+                }}>
+                  <h4 style={{ margin: '0', color: '#155724' }}>
+                    📂 Section Condition {cIndex + 1}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => removeConditionalSection(cIndex)}
+                    style={{ 
+                      padding: '8px 12px',
+                      backgroundColor: '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: 'pointer'
+                    }}
+                    title="Remove this section condition"
+                  >
+                    🗑️ Remove
+                  </button>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: '600' }}>
+                    Condition Name:
+                  </label>
+                  <input
+                    type="text"
+                    value={cond.condition_name || ''}
+                    onChange={(e) => updateConditionalSection(cIndex, 'condition_name', e.target.value)}
+                    className="form-input"
+                    placeholder="e.g., Senior Employees, New Hires, etc."
+                    style={{ fontSize: '16px', padding: '10px' }}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: '600' }}>
+                    Show sections when user's year is:
+                  </label>
+                  <select
+                    value={cond.condition_type}
+                    onChange={(e) => updateConditionalSection(cIndex, 'condition_type', e.target.value)}
+                    className="form-select"
+                    style={{ fontSize: '16px', padding: '10px' }}
+                  >
+                    <option value="year_equals">Exactly equal to</option>
+                    <option value="year_less_equal">Less than or equal to (≤)</option>
+                    <option value="year_greater_equal">Greater than or equal to (≥)</option>
+                    <option value="year_between">Between (inclusive)</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: '600' }}>
+                    Year Value:
+                  </label>
+                  {cond.condition_type === 'year_between' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <input
+                        type="number"
+                        min="1950"
+                        max="2050"
+                        value={cond.condition_value.split('-')[0] || ''}
+                        onChange={(e) => {
+                          const parts = cond.condition_value.split('-');
+                          const newValue = e.target.value + '-' + (parts[1] || '');
+                          updateConditionalSection(cIndex, 'condition_value', newValue);
+                        }}
+                        className="form-input"
+                        placeholder="From year"
+                        style={{ fontSize: '16px', padding: '10px', maxWidth: '120px' }}
+                      />
+                      <span>to</span>
+                      <input
+                        type="number"
+                        min="1950"
+                        max="2050"
+                        value={cond.condition_value.split('-')[1] || ''}
+                        onChange={(e) => {
+                          const parts = cond.condition_value.split('-');
+                          const newValue = (parts[0] || '') + '-' + e.target.value;
+                          updateConditionalSection(cIndex, 'condition_value', newValue);
+                        }}
+                        className="form-input"
+                        placeholder="To year"
+                        style={{ fontSize: '16px', padding: '10px', maxWidth: '120px' }}
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <input
+                        type="number"
+                        min="1950"
+                        max="2050"
+                        value={cond.condition_value}
+                        onChange={(e) => updateConditionalSection(cIndex, 'condition_value', e.target.value)}
+                        className="form-input"
+                        placeholder="e.g., 2024"
+                        style={{ fontSize: '16px', padding: '10px', maxWidth: '120px' }}
+                      />
+                    </div>
+                  )}
+                  <div style={{ marginTop: '8px', fontSize: '14px', color: '#6c757d' }}>
+                    {cond.condition_type === 'year_equals' && `Only users who entered in ${cond.condition_value || 'YYYY'}`}
+                    {cond.condition_type === 'year_less_equal' && `Users who entered in ${cond.condition_value || 'YYYY'} or earlier`}
+                    {cond.condition_type === 'year_greater_equal' && `Users who entered in ${cond.condition_value || 'YYYY'} or later`}
+                    {cond.condition_type === 'year_between' && `Users who entered between ${cond.condition_value.split('-')[0] || 'YYYY'} and ${cond.condition_value.split('-')[1] || 'YYYY'}`}
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: '600' }}>
+                    📂 Select Sections to Show for This Condition:
+                  </label>
+                  <div style={{ 
+                    fontSize: '14px', 
+                    color: '#155724', 
+                    marginBottom: '15px',
+                    padding: '10px',
+                    backgroundColor: '#d4edda',
+                    borderRadius: '5px'
+                  }}>
+                    Choose which <strong>sections</strong> (groups of questions) should appear when users meet this year condition.
+                    Each section contains multiple questions, making it easier to manage.
+                    Selected: <strong>{cond.section_ids.length}</strong> section(s)
+                  </div>
+                  
+                  {sections.length === 0 ? (
+                    <div style={{ 
+                      padding: '20px', 
+                      textAlign: 'center', 
+                      color: '#6c757d',
+                      backgroundColor: '#f8f9fa',
+                      border: '1px dashed #dee2e6',
+                      borderRadius: '5px'
+                    }}>
+                      No sections available yet. Add some sections above first.
+                    </div>
+                  ) : (
+                    <div style={{ 
+                      maxHeight: '200px', 
+                      overflowY: 'auto', 
+                      border: '2px solid #28a745', 
+                      borderRadius: '8px',
+                      padding: '15px',
+                      backgroundColor: 'white'
+                    }}>
+                      <div style={{ marginBottom: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allIds = (sections || []).map((s, index) => s.id || (index + 1));
+                            updateConditionalSectionIds(cIndex, allIds);
+                          }}
+                          style={{
+                            padding: '5px 10px',
+                            marginRight: '10px',
+                            backgroundColor: '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ✅ Select All Sections
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateConditionalSectionIds(cIndex, [])}
+                          style={{
+                            padding: '5px 10px',
+                            backgroundColor: '#6c757d',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ❌ Clear All
+                        </button>
+                      </div>
+                      
+                      {(sections || []).map((section, sIndex) => {
+                        const sectionId = section.id || (sIndex + 1);
+                        const questionsInSection = questions.filter(q => q.section_id === sectionId).length;
+                        
+                        return (
+                          <label 
+                            key={sIndex} 
+                            style={{ 
+                              display: 'block', 
+                              margin: '8px 0',
+                              padding: '12px',
+                              backgroundColor: cond.section_ids.includes(sectionId) ? '#d4edda' : '#f8f9fa',
+                              border: `2px solid ${cond.section_ids.includes(sectionId) ? '#28a745' : '#e9ecef'}`,
+                              borderRadius: '8px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={cond.section_ids.includes(sectionId)}
+                              onChange={(e) => {
+                                const currentIds = cond.section_ids;
+                                const newIds = e.target.checked
+                                  ? [...currentIds, sectionId]
+                                  : currentIds.filter(id => id !== sectionId);
+                                updateConditionalSectionIds(cIndex, newIds);
+                              }}
+                              style={{ marginRight: '12px' }}
+                            />
+                            <span style={{ 
+                              fontWeight: cond.section_ids.includes(sectionId) ? 'bold' : 'normal',
+                              color: cond.section_ids.includes(sectionId) ? '#155724' : '#495057'
+                            }}>
+                              <strong>📂 {section.name || section.section_name || `Section ${sIndex + 1}`}</strong>
+                              <small style={{ display: 'block', color: '#6c757d', fontSize: '12px', marginTop: '4px' }}>
+                                {questionsInSection} question{questionsInSection !== 1 ? 's' : ''} in this section
+                                {section.id && ` • ID: ${section.id}`}
+                              </small>
+                              {section.description && (
+                                <small style={{ display: 'block', color: '#6c757d', fontSize: '11px', fontStyle: 'italic' }}>
+                                  {section.description}
+                                </small>
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div style={{ textAlign: 'center', marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={addConditionalSection}
+                style={{
+                  padding: '15px 30px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}
+              >
+                ➕ Add New Section Condition Rule
+              </button>
+              {conditionalSections.length === 0 && (
+                <p style={{ marginTop: '15px', color: '#6c757d', fontSize: '14px' }}>
+                  💡 <strong>Tip:</strong> Create conditions to show different <strong>sections</strong> based on when users entered/joined.<br/>
+                  This is easier than selecting individual questions - just select entire sections!
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Role-Based Conditional Logic */}
+          <div className="card">
+            <h2>👤 Role-Based Conditional Logic</h2>
+            <div style={{ 
+              backgroundColor: '#e8f5e8', 
+              padding: '15px', 
+              borderRadius: '8px', 
+              marginBottom: '20px',
+              border: '1px solid #c3e6cb'
+            }}>
+              <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>🆕 Role-Based Section Logic!</h4>
+              <p style={{ margin: '0', color: '#155724', fontSize: '14px' }}>
+                Show different sections based on the user's role selection (Employee, Team Lead, or Management). 
+                Users will first select their role, then only see sections relevant to their position.
+                <br/><strong>Example:</strong> Show "Performance Review" section only to Team Leads, "Task Management" section only to Employees, and "Strategic Planning" section only to Management.
+              </p>
+            </div>
+
+            {(roleBasedConditionalSections || []).map((cond, cIndex) => (
+              <div key={cIndex} style={{
+                border: '2px solid #007bff',
+                borderRadius: '10px',
+                padding: '20px',
+                marginBottom: '20px',
+                backgroundColor: '#f0f8ff'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '15px'
+                }}>
+                  <h4 style={{ margin: '0', color: '#007bff' }}>👤 Role Condition {cIndex + 1}</h4>
+                  <button
+                    type="button"
+                    onClick={() => removeRoleBasedConditionalSection(cIndex)}
+                    style={{
+                      backgroundColor: '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '5px',
+                      padding: '5px 10px',
+                      cursor: 'pointer',
+                      fontSize: '12px'
+                    }}
+                  >
+                    🗑️ Remove
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                  <div>
+                    <label>Condition Name:</label>
+                    <input
+                      type="text"
+                      value={cond.condition_name || ''}
+                      onChange={(e) => updateRoleBasedConditionalSection(cIndex, 'condition_name', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px'
+                      }}
+                      placeholder="e.g., Team Lead Sections"
+                    />
+                  </div>
+                  <div>
+                    <label>Show sections when role is:</label>
+                    <select
+                      value={cond.condition_value || 'employee'}
+                      onChange={(e) => updateRoleBasedConditionalSection(cIndex, 'condition_value', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px'
+                      }}
+                    >
+                      <option value="employee">👤 Employee</option>
+                      <option value="team_lead">👑 Team Lead</option>
+                      <option value="management">👥 Management</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Management Names Input - Show only when Management role is selected */}
+                {cond.condition_value === 'management' && (
+                  <div style={{ marginBottom: '15px' }}>
+                    <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
+                      📋 List of People to Evaluate (Management Role):
+                    </label>
+                    <div style={{
+                      backgroundColor: '#f8f9fa',
+                      padding: '15px',
+                      borderRadius: '8px',
+                      border: '1px solid #dee2e6'
+                    }}>
+                      <textarea
+                        value={managementNames[cIndex] || ''}
+                        onChange={(e) => setManagementNames({ 
+                          ...managementNames, 
+                          [cIndex]: e.target.value 
+                        })}
+                        placeholder={`Enter the list of people to be evaluated, one per line:\n\n1. Gibral\n2. John Smith\n3. Jane Doe\n4. ...\n\nOr simply:\nGibral\nJohn Smith\nJane Doe`}
+                        style={{
+                          width: '100%',
+                          minHeight: '120px',
+                          padding: '12px',
+                          border: '1px solid #ced4da',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          fontFamily: 'monospace',
+                          resize: 'vertical'
+                        }}
+                        rows={6}
+                      />
+                      <div style={{ 
+                        marginTop: '10px', 
+                        fontSize: '13px', 
+                        color: '#6c757d',
+                        backgroundColor: '#e9ecef',
+                        padding: '8px',
+                        borderRadius: '4px'
+                      }}>
+                        💡 <strong>Instructions:</strong> Enter the names of people who will be evaluated in this round-robin assessment. 
+                        Each person will be evaluated for all questions in each section before moving to the next section.
+                        <br/><strong>Format:</strong> One name per line (numbering is optional).
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
+                    Select sections to show for {
+                      cond.condition_value === 'team_lead' ? 'Team Leads' : 
+                      cond.condition_value === 'management' ? 'Management' : 
+                      'Employees'
+                    }:
+                  </label>
+                  <div style={{
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    padding: '15px',
+                    backgroundColor: '#fff',
+                    maxHeight: '200px',
+                    overflowY: 'auto'
+                  }}>
+                    {sections.length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                        {sections.map((section) => (
+                          <label key={section.id} style={{ display: 'flex', alignItems: 'center', padding: '5px' }}>
+                            <input
+                              type="checkbox"
+                              checked={(cond.section_ids || []).includes(section.id)}
+                              onChange={(e) => {
+                                const currentIds = cond.section_ids || [];
+                                const newIds = e.target.checked
+                                  ? [...currentIds, section.id]
+                                  : currentIds.filter(id => id !== section.id);
+                                updateRoleBasedConditionalSectionIds(cIndex, newIds);
+                              }}
+                              style={{ marginRight: '8px' }}
+                            />
+                            <span style={{ fontSize: '14px' }}>
+                              📂 {section.name || section.section_name || `Section ${section.id}`}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ color: '#6c757d', margin: '0', textAlign: 'center' }}>
+                        📝 Add sections first to set up role-based conditions
+                      </p>
+                    )}
+                  </div>
+                  {(cond.section_ids || []).length > 0 && (
+                    <p style={{ fontSize: '12px', color: '#28a745', marginTop: '8px' }}>
+                      ✅ {(cond.section_ids || []).length} section(s) selected for {
+                        cond.condition_value === 'team_lead' ? 'Team Leads' : 
+                        cond.condition_value === 'management' ? 'Management' : 
+                        'Employees'
+                      }
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div style={{ textAlign: 'center', marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={addRoleBasedConditionalSection}
+                style={{
+                  padding: '15px 30px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}
+              >
+                👤 Add New Role Condition Rule
+              </button>
+              {roleBasedConditionalSections.length === 0 && (
+                <p style={{ marginTop: '15px', color: '#6c757d', fontSize: '14px' }}>
+                  💡 <strong>Tip:</strong> Create role-based conditions to show different <strong>sections</strong> to Employees, Team Leads, or Management.<br/>
+                  Users will select their role before seeing form questions!
+                </p>
+              )}
+            </div>
+          </div>
+
           <div className="card">
             <button
               type="submit"
@@ -1080,7 +1914,7 @@ const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
         <strong style={{ color: '#374151' }}>Current Scale Order:</strong>
         <div style={{ display: 'flex', gap: '5px' }}>
-          {scaleOrder.map((rating, index) => (
+          {(scaleOrder || []).map((rating, index) => (
             <span
               key={index}
               style={{
@@ -1122,7 +1956,7 @@ const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
               Drag to reorder or use buttons:
             </p>
             <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-              {scaleOrder.map((rating, index) => (
+              {(scaleOrder || []).map((rating, index) => (
                 <div
                   key={index}
                   style={{

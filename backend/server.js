@@ -171,7 +171,7 @@ app.get('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =>
 // Create new form (admin)
 app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { title, description, form_type, questions, conditionalQuestions } = req.body;
+    const { title, description, form_type, questions, conditionalQuestions, sections } = req.body;
     const unique_link = uuidv4();
 
     // Insert form
@@ -183,23 +183,42 @@ app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =
 
     const formId = formResult.rows[0].id;
 
+    // Insert sections first if they exist
+    const sectionIdMap = {}; // Maps frontend section ID to database ID
+    if (sections && sections.length > 0) {
+      for (let i = 0; i < sections.length; i++) {
+        const section = sections[i];
+        const sectionResult = await pool.query(`
+          INSERT INTO form_sections (form_id, section_name, section_description, order_number)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id
+        `, [formId, section.name, section.description || null, i + 1]);
+        
+        if (section.id) {
+          sectionIdMap[section.id] = sectionResult.rows[0].id;
+        }
+      }
+    }
+
     // Insert questions and create ID mapping
     const questionIdMap = {}; // Maps frontend ID to database ID
     if (questions && questions.length > 0) {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
+        const sectionId = q.section_id ? sectionIdMap[q.section_id] : null;
+        
         const questionResult = await pool.query(`
           INSERT INTO form_questions 
           (form_id, question_text, question_text_id, question_type, options, 
            left_statement, right_statement, left_statement_id, right_statement_id, 
-           is_required, order_number)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           is_required, order_number, section_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING id
         `, [
           formId, q.question_text, q.question_text_id, q.question_type,
           q.options ? JSON.stringify(q.options) : null,
           q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
-          q.is_required, i + 1
+          q.is_required, i + 1, sectionId
         ]);
         
         // Map frontend ID to database ID
@@ -221,6 +240,40 @@ app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =
           INSERT INTO conditional_questions (form_id, condition_type, condition_value, question_ids)
           VALUES ($1, $2, $3, $4)
         `, [formId, cq.condition_type, cq.condition_value, mappedQuestionIds]);
+      }
+    }
+
+    // Handle conditional sections (section-based conditional logic)
+    const { conditionalSections } = req.body;
+    
+    // Insert new conditional sections with mapped IDs  
+    if (conditionalSections && conditionalSections.length > 0) {
+      for (const cs of conditionalSections) {
+        // Map frontend section IDs to database IDs
+        const mappedSectionIds = cs.section_ids.map(frontendId => {
+          return sectionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO conditional_sections (form_id, condition_name, condition_type, condition_value, section_ids)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [formId, cs.condition_name, cs.condition_type, cs.condition_value, mappedSectionIds]);
+      }
+    }
+
+    // Handle role-based conditional sections
+    const { roleBasedConditionalSections } = req.body;
+    if (roleBasedConditionalSections && roleBasedConditionalSections.length > 0) {
+      for (const rbcs of roleBasedConditionalSections) {
+        // Map frontend section IDs to database IDs
+        const mappedSectionIds = rbcs.section_ids.map(frontendId => {
+          return sectionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO role_based_conditional_sections (form_id, condition_name, condition_type, condition_value, section_ids, management_names)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [formId, rbcs.condition_name, rbcs.condition_type || 'role_equals', rbcs.condition_value, mappedSectionIds, rbcs.management_names]);
       }
     }
 
@@ -250,6 +303,13 @@ app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
 
     const form = formResult.rows[0];
 
+    // Get sections
+    const sectionsResult = await pool.query(`
+      SELECT * FROM form_sections 
+      WHERE form_id = $1 
+      ORDER BY order_number
+    `, [form.id]);
+
     // Get questions
     const questionsResult = await pool.query(`
       SELECT * FROM form_questions 
@@ -262,13 +322,26 @@ app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       SELECT * FROM conditional_questions WHERE form_id = $1
     `, [form.id]);
 
+    // Get conditional sections
+    const conditionalSectionsResult = await pool.query(`
+      SELECT * FROM conditional_sections WHERE form_id = $1 AND is_active = true
+    `, [form.id]);
+
+    // Get role-based conditional sections
+    const roleBasedConditionalSectionsResult = await pool.query(`
+      SELECT * FROM role_based_conditional_sections WHERE form_id = $1 AND is_active = true
+    `, [form.id]);
+
     res.json({
       ...form,
+      sections: sectionsResult.rows,
       questions: questionsResult.rows.map(q => ({
         ...q,
         options: q.options || null
       })),
-      conditional_questions: conditionalResult.rows
+      conditional_questions: conditionalResult.rows,
+      conditional_sections: conditionalSectionsResult.rows,
+      role_based_conditional_sections: roleBasedConditionalSectionsResult.rows
     });
   } catch (error) {
     console.error('Get form error:', error);
@@ -280,7 +353,10 @@ app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
 app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { formId } = req.params;
-    const { title, description, form_type, questions, conditionalQuestions } = req.body;
+    const { title, description, form_type, questions, conditionalQuestions, sections } = req.body;
+    
+    console.log('PUT /api/admin/forms/:formId - Received sections:', JSON.stringify(sections, null, 2));
+    console.log('PUT /api/admin/forms/:formId - Processing sections with IDs:', sections?.map(s => ({ id: s.id, name: s.name || s.section_name })));
 
     // Check if form exists and user owns it (or is admin)
     const formCheck = await pool.query(`
@@ -312,6 +388,106 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       existingQuestionsMap[row.order_number] = row;
     });
 
+    // Handle sections - get existing sections first
+    const existingSections = await pool.query(`
+      SELECT id, section_name, section_description, order_number
+      FROM form_sections WHERE form_id = $1 ORDER BY order_number
+    `, [formId]);
+    
+    const existingSectionsMap = {};
+    existingSections.rows.forEach(row => {
+      existingSectionsMap[row.order_number] = row;
+    });
+
+    // Process sections - update existing, create new, delete unused
+    const sectionIdMap = {}; // Maps frontend section ID to database ID
+    if (sections && sections.length > 0) {
+      // Filter out invalid sections
+      const validSections = sections.filter(section => {
+        // Check for both 'name' (from frontend) and 'section_name' (from database)
+        const sectionName = section.name || section.section_name;
+        if (!section || !sectionName || sectionName.trim() === '') {
+          console.warn('Filtering out invalid section:', section);
+          return false;
+        }
+        return true;
+      });
+
+      console.log(`Processing ${validSections.length} valid sections out of ${sections.length} total`);
+
+      for (let i = 0; i < validSections.length; i++) {
+        const section = validSections[i];
+        const orderNumber = i + 1;
+
+        try {
+          // Get section name from either property
+          const sectionName = (section.name || section.section_name).trim();
+          const sectionDescription = section.description || section.section_description || null;
+          
+          let sectionDatabaseId;
+
+          // If section has an existing database ID, update it directly
+          if (section.id && Number.isInteger(section.id)) {
+            console.log(`📝 Updating existing section with ID ${section.id}: "${sectionName}"`);
+            await pool.query(`
+              UPDATE form_sections 
+              SET section_name = $1, section_description = $2, order_number = $3, updated_at = CURRENT_TIMESTAMP
+              WHERE id = $4 AND form_id = $5
+            `, [sectionName, sectionDescription, orderNumber, section.id, formId]);
+            
+            sectionDatabaseId = section.id;
+            sectionIdMap[section.id] = section.id;
+          } else {
+            // Check if there's an existing section at this position
+            const existingSection = existingSectionsMap[orderNumber];
+            
+            if (existingSection) {
+              console.log(`📝 Updating existing section at position ${orderNumber} with ID ${existingSection.id}: "${sectionName}"`);
+              await pool.query(`
+                UPDATE form_sections 
+                SET section_name = $1, section_description = $2, order_number = $3, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $4 AND form_id = $5
+              `, [sectionName, sectionDescription, orderNumber, existingSection.id, formId]);
+              
+              sectionDatabaseId = existingSection.id;
+              if (section.id) {
+                sectionIdMap[section.id] = existingSection.id;
+              }
+            } else {
+              // Create new section
+              console.log(`➕ Creating new section at position ${orderNumber}: "${sectionName}"`);
+              const sectionResult = await pool.query(`
+                INSERT INTO form_sections (form_id, section_name, section_description, order_number)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id
+              `, [formId, sectionName, sectionDescription, orderNumber]);
+              
+              sectionDatabaseId = sectionResult.rows[0].id;
+              if (section.id) {
+                sectionIdMap[section.id] = sectionDatabaseId;
+              }
+            }
+          }
+        } catch (sectionError) {
+          console.error('Error processing section:', section, sectionError);
+          throw sectionError;
+        }
+      }
+      
+      // Delete unused sections (sections beyond the valid count)
+      if (validSections.length < existingSections.rows.length) {
+        const sectionsToDelete = existingSections.rows.slice(validSections.length);
+        console.log(`Deleting ${sectionsToDelete.length} unused sections`);
+        for (const sectionToDelete of sectionsToDelete) {
+          await pool.query('DELETE FROM form_sections WHERE id = $1', [sectionToDelete.id]);
+        }
+      }
+    } else {
+      console.log('No sections provided, deleting all existing sections');
+      // If no sections provided, delete all existing sections
+      await pool.query('DELETE FROM form_sections WHERE form_id = $1', [formId]);
+    }
+
     // Delete conditional questions (we'll recreate these)
     await pool.query('DELETE FROM conditional_questions WHERE form_id = $1', [formId]);
 
@@ -321,65 +497,92 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
         const orderNumber = i + 1;
-        const existingQuestion = existingQuestionsMap[orderNumber];
 
         let questionResult;
+        let questionDatabaseId;
         
-        if (existingQuestion) {
-          // Update existing question to preserve its ID
-          console.log(`📝 Updating existing question ID ${existingQuestion.id} at position ${orderNumber}`);
-          
-          // Preserve existing scale_order if this is an assessment question
-          let scaleOrder = null;
-          if (q.question_type === 'assessment') {
-            scaleOrder = existingQuestion.scale_order || [1, 2, 3, 4, 5];
-          }
+        // Determine section ID - use mapped ID if available, otherwise use direct ID
+        const sectionId = q.section_id ? (sectionIdMap[q.section_id] || q.section_id) : null;
+        
+        // Preserve existing scale_order if this is an assessment question
+        let scaleOrder = null;
+        if (q.question_type === 'assessment') {
+          // Check if question has existing scale_order
+          const existingQuestion = existingQuestionsMap[orderNumber];
+          scaleOrder = q.scale_order || existingQuestion?.scale_order || [1, 2, 3, 4, 5];
+        }
+
+        // If question has an existing database ID, update it directly
+        if (q.id && Number.isInteger(q.id)) {
+          console.log(`📝 Updating existing question with ID ${q.id} at position ${orderNumber}`);
           
           questionResult = await pool.query(`
             UPDATE form_questions 
             SET question_text = $1, question_text_id = $2, question_type = $3, options = $4,
                 left_statement = $5, right_statement = $6, left_statement_id = $7, right_statement_id = $8,
-                is_required = $9, order_number = $10, scale_order = $11, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $12 AND form_id = $13
+                is_required = $9, order_number = $10, scale_order = $11, section_id = $12, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $13 AND form_id = $14
             RETURNING id
           `, [
             q.question_text, q.question_text_id, q.question_type,
             q.options ? JSON.stringify(q.options) : null,
             q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
             q.is_required, orderNumber, scaleOrder ? JSON.stringify(scaleOrder) : null,
-            existingQuestion.id, formId
+            sectionId, q.id, formId
           ]);
           
-          // Map frontend ID to existing database ID (preserved)
-          if (q.id) {
-            questionIdMap[q.id] = existingQuestion.id;
-          }
+          questionDatabaseId = q.id;
+          questionIdMap[q.id] = q.id;
         } else {
-          // Create new question (only for truly new questions)
-          console.log(`🆕 Creating new question at position ${orderNumber}`);
+          // Check if there's an existing question at this position
+          const existingQuestion = existingQuestionsMap[orderNumber];
           
-          let scaleOrder = null;
-          if (q.question_type === 'assessment') {
-            scaleOrder = [1, 2, 3, 4, 5];
-          }
-          
-          questionResult = await pool.query(`
-            INSERT INTO form_questions 
-            (form_id, question_text, question_text_id, question_type, options, 
-             left_statement, right_statement, left_statement_id, right_statement_id, 
-             is_required, order_number, scale_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            RETURNING id
-          `, [
+          if (existingQuestion) {
+            console.log(`📝 Updating existing question ID ${existingQuestion.id} at position ${orderNumber}`);
+            
+            questionResult = await pool.query(`
+              UPDATE form_questions 
+              SET question_text = $1, question_text_id = $2, question_type = $3, options = $4,
+                  left_statement = $5, right_statement = $6, left_statement_id = $7, right_statement_id = $8,
+                  is_required = $9, order_number = $10, scale_order = $11, section_id = $12, updated_at = CURRENT_TIMESTAMP
+              WHERE id = $13 AND form_id = $14
+              RETURNING id
+            `, [
+              q.question_text, q.question_text_id, q.question_type,
+              q.options ? JSON.stringify(q.options) : null,
+              q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
+              q.is_required, orderNumber, scaleOrder ? JSON.stringify(scaleOrder) : null,
+              sectionId, existingQuestion.id, formId
+            ]);
+            
+            questionDatabaseId = existingQuestion.id;
+            if (q.id) {
+              questionIdMap[q.id] = existingQuestion.id;
+            }
+          } else {
+            // Create new question (only for truly new questions)
+            console.log(`🆕 Creating new question at position ${orderNumber}`);
+            
+            questionResult = await pool.query(`
+              INSERT INTO form_questions 
+              (form_id, question_text, question_text_id, question_type, options, 
+               left_statement, right_statement, left_statement_id, right_statement_id, 
+               is_required, order_number, scale_order, section_id)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+              RETURNING id
+            `, [
             formId, q.question_text, q.question_text_id, q.question_type,
             q.options ? JSON.stringify(q.options) : null,
             q.left_statement, q.right_statement, q.left_statement_id, q.right_statement_id,
-            q.is_required, orderNumber, scaleOrder ? JSON.stringify(scaleOrder) : null
+            q.is_required, orderNumber, scaleOrder ? JSON.stringify(scaleOrder) : null,
+            sectionId
           ]);
           
-          // Map frontend ID to new database ID
-          if (q.id) {
-            questionIdMap[q.id] = questionResult.rows[0].id;
+            // Map frontend ID to new database ID
+            questionDatabaseId = questionResult.rows[0].id;
+            if (q.id) {
+              questionIdMap[q.id] = questionDatabaseId;
+            }
           }
         }
       }
@@ -406,6 +609,48 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
           INSERT INTO conditional_questions (form_id, condition_type, condition_value, question_ids)
           VALUES ($1, $2, $3, $4)
         `, [formId, cq.condition_type, cq.condition_value, mappedQuestionIds]);
+      }
+    }
+
+    // Handle conditional sections (section-based conditional logic)
+    const { conditionalSections } = req.body;
+    
+    // Delete existing conditional sections
+    await pool.query('DELETE FROM conditional_sections WHERE form_id = $1', [formId]);
+    
+    // Insert new conditional sections with mapped IDs  
+    if (conditionalSections && conditionalSections.length > 0) {
+      for (const cs of conditionalSections) {
+        // Map frontend section IDs to database IDs
+        const mappedSectionIds = cs.section_ids.map(frontendId => {
+          return sectionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO conditional_sections (form_id, condition_name, condition_type, condition_value, section_ids)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [formId, cs.condition_name, cs.condition_type, cs.condition_value, mappedSectionIds]);
+      }
+    }
+
+    // Handle role-based conditional sections
+    const { roleBasedConditionalSections } = req.body;
+    
+    // Delete existing role-based conditional sections
+    await pool.query('DELETE FROM role_based_conditional_sections WHERE form_id = $1', [formId]);
+    
+    // Insert new role-based conditional sections with mapped IDs  
+    if (roleBasedConditionalSections && roleBasedConditionalSections.length > 0) {
+      for (const rbcs of roleBasedConditionalSections) {
+        // Map frontend section IDs to database IDs
+        const mappedSectionIds = rbcs.section_ids.map(frontendId => {
+          return sectionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO role_based_conditional_sections (form_id, condition_name, condition_type, condition_value, section_ids, management_names)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [formId, rbcs.condition_name, rbcs.condition_type || 'role_equals', rbcs.condition_value, mappedSectionIds, rbcs.management_names]);
       }
     }
 
@@ -437,6 +682,13 @@ app.get('/api/form/:uniqueLink', async (req, res) => {
     const form = formResult.rows[0];
     console.log('✅ Form found:', form.title);
 
+    // Get sections
+    const sectionsResult = await pool.query(`
+      SELECT * FROM form_sections 
+      WHERE form_id = $1 
+      ORDER BY order_number
+    `, [form.id]);
+
     // Get questions
     const questionsResult = await pool.query(`
       SELECT * FROM form_questions 
@@ -449,15 +701,28 @@ app.get('/api/form/:uniqueLink', async (req, res) => {
       SELECT * FROM conditional_questions WHERE form_id = $1
     `, [form.id]);
 
-    console.log(`📋 Found ${questionsResult.rows.length} questions and ${conditionalResult.rows.length} conditional rules`);
+    // Get conditional sections
+    const conditionalSectionsResult = await pool.query(`
+      SELECT * FROM conditional_sections WHERE form_id = $1 AND is_active = true
+    `, [form.id]);
+
+    // Get role-based conditional sections
+    const roleBasedConditionalSectionsResult = await pool.query(`
+      SELECT * FROM role_based_conditional_sections WHERE form_id = $1 AND is_active = true
+    `, [form.id]);
+
+    console.log(`📋 Found ${sectionsResult.rows.length} sections, ${questionsResult.rows.length} questions, ${conditionalResult.rows.length} conditional rules, ${conditionalSectionsResult.rows.length} conditional sections, and ${roleBasedConditionalSectionsResult.rows.length} role-based conditional sections`);
 
     res.json({
       ...form,
+      sections: sectionsResult.rows,
       questions: questionsResult.rows.map(q => ({
         ...q,
         options: q.options || null
       })),
-      conditional_questions: conditionalResult.rows
+      conditional_questions: conditionalResult.rows,
+      conditional_sections: conditionalSectionsResult.rows,
+      role_based_conditional_sections: roleBasedConditionalSectionsResult.rows
     });
   } catch (error) {
     console.error('❌ Get form error:', error.message);
@@ -470,7 +735,28 @@ app.get('/api/form/:uniqueLink', async (req, res) => {
 app.post('/api/form/:uniqueLink/submit', async (req, res) => {
   try {
     const { uniqueLink } = req.params;
-    const { respondent_name, respondent_email, responses } = req.body;
+    const { 
+      respondent_name, 
+      respondent_email, 
+      responses, 
+      management_evaluation,
+      management_responses,
+      evaluated_people,
+      role_selection 
+    } = req.body;
+
+    console.log('📥 Form submission received:', {
+      uniqueLink,
+      respondent_name,
+      respondent_email,
+      role_selection,
+      management_evaluation,
+      responsesType: typeof responses,
+      responsesKeys: responses ? Object.keys(responses) : 'null/undefined',
+      managementResponsesType: typeof management_responses,
+      managementResponsesKeys: management_responses ? Object.keys(management_responses) : 'null/undefined',
+      evaluated_people
+    });
 
     // Get form
     const formResult = await pool.query(`
@@ -495,11 +781,41 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
       });
     }
 
+    // Prepare responses for database
+    let finalResponses;
+    
+    if (management_evaluation && management_responses) {
+      // For management flow, structure the responses properly
+      finalResponses = {
+        role_selection: role_selection || 'management',
+        management_evaluation: true,
+        evaluated_people: evaluated_people || [],
+        management_responses: management_responses
+      };
+    } else {
+      // For regular flow, use standard responses
+      finalResponses = responses || {};
+    }
+
+    // Ensure finalResponses is not null/undefined
+    if (!finalResponses || Object.keys(finalResponses).length === 0) {
+      finalResponses = { submitted: true }; // Minimum data to avoid null constraint
+    }
+
+    console.log('💾 About to insert into database:', {
+      formId,
+      respondent_name,
+      respondent_email,
+      finalResponsesType: typeof finalResponses,
+      finalResponsesKeys: Object.keys(finalResponses),
+      finalResponsesStringified: JSON.stringify(finalResponses)
+    });
+
     // Insert response
     await pool.query(`
       INSERT INTO form_responses (form_id, respondent_name, respondent_email, responses)
       VALUES ($1, $2, $3, $4)
-    `, [formId, respondent_name, respondent_email, JSON.stringify(responses)]);
+    `, [formId, respondent_name, respondent_email, JSON.stringify(finalResponses)]);
 
     res.json({ message: 'Response submitted successfully' });
   } catch (error) {
@@ -545,6 +861,7 @@ app.get('/api/admin/forms/:formId/responses', authenticateToken, requireAdmin, a
 app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { formId } = req.params;
+    const { role, year } = req.query; // Get filter parameters
 
     // Get form details
     const formResult = await pool.query('SELECT * FROM forms WHERE id = $1', [formId]);
@@ -561,17 +878,57 @@ app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, asyn
     `, [formId]);
     const questions = questionsResult.rows;
 
-    // Get responses
-    const responsesResult = await pool.query(`
+    // Get responses with optional filtering
+    let responsesQuery = `
       SELECT * FROM form_responses 
-      WHERE form_id = $1 
-      ORDER BY submitted_at ASC
-    `, [formId]);
+      WHERE form_id = $1
+    `;
+    let queryParams = [formId];
+    let paramIndex = 2;
+
+    // Apply filters if provided
+    if (role) {
+      responsesQuery += ` AND (
+        responses->>'selected_role' = $${paramIndex} OR
+        EXISTS (
+          SELECT 1 FROM jsonb_each_text(responses) 
+          WHERE key ILIKE '%role%' AND value = $${paramIndex}
+        )
+      )`;
+      queryParams.push(role);
+      paramIndex++;
+    }
+
+    if (year) {
+      responsesQuery += ` AND (
+        responses->>'year_selection' = $${paramIndex} OR
+        responses->>'selected_year' = $${paramIndex} OR
+        EXISTS (
+          SELECT 1 FROM jsonb_each_text(responses) 
+          WHERE key ILIKE '%year%' AND value = $${paramIndex}
+        )
+      )`;
+      queryParams.push(year);
+      paramIndex++;
+    }
+
+    responsesQuery += ` ORDER BY submitted_at ASC`;
+
+    const responsesResult = await pool.query(responsesQuery, queryParams);
     const responses = responsesResult.rows;
+
+    console.log(`📊 Export with filters - Role: ${role || 'All'}, Year: ${year || 'All'}, Found: ${responses.length} responses`);
 
     // Create Excel workbook
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Form Responses');
+    let worksheetName = 'Form Responses';
+    if (role || year) {
+      const filters = [];
+      if (role) filters.push(role.charAt(0).toUpperCase() + role.slice(1));
+      if (year) filters.push(year);
+      worksheetName += ` (${filters.join(', ')})`;
+    }
+    const worksheet = workbook.addWorksheet(worksheetName);
 
     // Define headers
     const headers = [
@@ -691,11 +1048,79 @@ app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, asyn
         // Map all questions in order
         ...allQuestions.map(q => {
           const answer = responseData[q.id.toString()] || '';
+          
+          // Handle management response structure
+          if (typeof answer === 'object' && answer !== null && !Array.isArray(answer)) {
+            // Check if this looks like a management response structure
+            const entries = Object.entries(answer);
+            if (entries.length > 0) {
+              const isManagementStructure = entries.some(([key, val]) => 
+                typeof key === 'string' && 
+                key.includes('_') && 
+                typeof val === 'object' && 
+                val !== null
+              );
+              
+              if (isManagementStructure) {
+                // Format management responses for Excel
+                return entries.map(([personSection, answers]) => {
+                  const [personName, sectionNum] = personSection.split('_');
+                  const sectionNumber = parseInt(sectionNum) + 1;
+                  
+                  if (typeof answers === 'object' && answers !== null) {
+                    const answerEntries = Object.entries(answers);
+                    return answerEntries.map(([qId, answerValue]) => {
+                      // Find question text for this ID
+                      const questionObj = questionMapping[qId];
+                      const questionText = questionObj ? questionObj.text : `Question ${qId}`;
+                      return `${personName} (Sec ${sectionNumber}): ${questionText} = ${answerValue}`;
+                    }).join(' | ');
+                  }
+                  return `${personName} (Sec ${sectionNumber}): ${JSON.stringify(answers)}`;
+                }).join(' || ');
+              }
+            }
+            // Fallback for other objects
+            return JSON.stringify(answer);
+          }
+          
           return Array.isArray(answer) ? answer.join(', ') : (answer || '');
         }),
         // Map special fields
         ...Array.from(specialFields).map(field => {
           const answer = responseData[field] || '';
+          
+          // Handle management response structure in special fields too
+          if (typeof answer === 'object' && answer !== null && !Array.isArray(answer)) {
+            const entries = Object.entries(answer);
+            if (entries.length > 0) {
+              const isManagementStructure = entries.some(([key, val]) => 
+                typeof key === 'string' && 
+                key.includes('_') && 
+                typeof val === 'object' && 
+                val !== null
+              );
+              
+              if (isManagementStructure) {
+                return entries.map(([personSection, answers]) => {
+                  const [personName, sectionNum] = personSection.split('_');
+                  const sectionNumber = parseInt(sectionNum) + 1;
+                  
+                  if (typeof answers === 'object' && answers !== null) {
+                    const answerEntries = Object.entries(answers);
+                    return answerEntries.map(([qId, answerValue]) => {
+                      const questionObj = questionMapping[qId];
+                      const questionText = questionObj ? questionObj.text : `Question ${qId}`;
+                      return `${personName} (Sec ${sectionNumber}): ${questionText} = ${answerValue}`;
+                    }).join(' | ');
+                  }
+                  return `${personName} (Sec ${sectionNumber}): ${JSON.stringify(answers)}`;
+                }).join(' || ');
+              }
+            }
+            return JSON.stringify(answer);
+          }
+          
           return Array.isArray(answer) ? answer.join(', ') : (answer || '');
         })
       ];
@@ -826,6 +1251,346 @@ app.post('/api/form/:uniqueLink/conditional-questions', async (req, res) => {
     }
   } catch (error) {
     console.error('Conditional questions error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get conditional sections based on year (public)
+app.post('/api/form/:uniqueLink/conditional-sections', async (req, res) => {
+  try {
+    const { uniqueLink } = req.params;
+    const { selectedYear } = req.body;
+
+    // Get form
+    const formResult = await pool.query(`
+      SELECT id FROM forms WHERE unique_link = $1 AND is_active = true
+    `, [uniqueLink]);
+
+    if (formResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Form not found' });
+    }
+
+    const formId = formResult.rows[0].id;
+
+    // Get conditional sections for this year
+    const yearInt = parseInt(selectedYear);
+    
+    // First get all conditional sections for this form
+    const conditionalSectionsResult = await pool.query(`
+      SELECT * FROM conditional_sections 
+      WHERE form_id = $1 AND is_active = true
+    `, [formId]);
+
+    // Filter based on conditions in JavaScript to handle JSONB properly
+    const matchingConditions = conditionalSectionsResult.rows.filter(row => {
+      const conditionValue = row.condition_value;
+      
+      try {
+        switch (row.condition_type) {
+          case 'year_equals':
+            const targetYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+            return yearInt === targetYear;
+            
+          case 'year_less_equal':
+            const maxYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+            return yearInt <= maxYear;
+            
+          case 'year_greater_equal':
+            const minYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+            return yearInt >= minYear;
+            
+          case 'year_between':
+            if (typeof conditionValue === 'string' && conditionValue.includes('-')) {
+              const [startYear, endYear] = conditionValue.split('-').map(y => parseInt(y.trim()));
+              return yearInt >= startYear && yearInt <= endYear;
+            }
+            return false;
+            
+          default:
+            return false;
+        }
+      } catch (error) {
+        console.error(`Error processing section condition for row ${row.id}:`, error);
+        return false;
+      }
+    });
+
+    // Get all section IDs to show from matching conditions
+    let sectionIdsToShow = [];
+    matchingConditions.forEach(row => {
+      sectionIdsToShow = [...sectionIdsToShow, ...row.section_ids];
+    });
+
+    // Remove duplicates
+    sectionIdsToShow = [...new Set(sectionIdsToShow)];
+
+    // Get the actual sections and their questions
+    if (sectionIdsToShow.length > 0) {
+      const sectionsResult = await pool.query(`
+        SELECT * FROM form_sections 
+        WHERE form_id = $1 AND id = ANY($2)
+        ORDER BY order_number
+      `, [formId, sectionIdsToShow]);
+
+      // Get all questions for these sections
+      const questionsResult = await pool.query(`
+        SELECT * FROM form_questions 
+        WHERE form_id = $1 AND section_id = ANY($2)
+        ORDER BY order_number
+      `, [formId, sectionIdsToShow]);
+
+      const questions = questionsResult.rows.map(q => ({
+        ...q,
+        options: q.options || null
+      }));
+
+      res.json({
+        sections: sectionsResult.rows,
+        questions: questions
+      });
+    } else {
+      res.json({
+        sections: [],
+        questions: []
+      });
+    }
+  } catch (error) {
+    console.error('Conditional sections error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get role-based sections (public)
+app.post('/api/form/:uniqueLink/role-based-sections', async (req, res) => {
+  try {
+    const { uniqueLink } = req.params;
+    const { selectedRole } = req.body;
+
+    // Get form
+    const formResult = await pool.query(`
+      SELECT id FROM forms WHERE unique_link = $1 AND is_active = true
+    `, [uniqueLink]);
+
+    if (formResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Form not found' });
+    }
+
+    const formId = formResult.rows[0].id;
+
+    // Get role-based conditional sections for this role
+    const roleBasedSectionsResult = await pool.query(`
+      SELECT * FROM role_based_conditional_sections 
+      WHERE form_id = $1 AND is_active = true AND condition_value = $2
+    `, [formId, selectedRole]);
+
+    // Get all section IDs to show from matching conditions
+    let sectionIdsToShow = [];
+    roleBasedSectionsResult.rows.forEach(row => {
+      sectionIdsToShow = [...sectionIdsToShow, ...row.section_ids];
+    });
+
+    // Remove duplicates
+    sectionIdsToShow = [...new Set(sectionIdsToShow)];
+
+    // Get the actual sections and their questions
+    if (sectionIdsToShow.length > 0) {
+      const sectionsResult = await pool.query(`
+        SELECT * FROM form_sections 
+        WHERE form_id = $1 AND id = ANY($2)
+        ORDER BY order_number
+      `, [formId, sectionIdsToShow]);
+
+      // Get all questions for these sections
+      const questionsResult = await pool.query(`
+        SELECT * FROM form_questions 
+        WHERE form_id = $1 AND section_id = ANY($2)
+        ORDER BY order_number
+      `, [formId, sectionIdsToShow]);
+
+      const questions = questionsResult.rows.map(q => ({
+        ...q,
+        options: q.options || null
+      }));
+
+      // For management role, include management configuration
+      let managementConfig = null;
+      if (selectedRole === 'management' && roleBasedSectionsResult.rows.length > 0) {
+        managementConfig = roleBasedSectionsResult.rows.find(row => row.condition_value === 'management');
+      }
+
+      res.json({
+        sections: sectionsResult.rows,
+        questions: questions,
+        managementConfig: managementConfig
+      });
+    } else {
+      res.json({
+        sections: [],
+        questions: [],
+        managementConfig: null
+      });
+    }
+  } catch (error) {
+    console.error('Role-based sections error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get combined conditional sections (year + role) (public)
+app.post('/api/form/:uniqueLink/combined-conditional-sections', async (req, res) => {
+  try {
+    const { uniqueLink } = req.params;
+    const { selectedYear, selectedRole } = req.body;
+
+    // Get form
+    const formResult = await pool.query(`
+      SELECT id FROM forms WHERE unique_link = $1 AND is_active = true
+    `, [uniqueLink]);
+
+    if (formResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Form not found' });
+    }
+
+    const formId = formResult.rows[0].id;
+
+    // Step 1: Get year-based conditional sections
+    let yearBasedSectionIds = [];
+    
+    if (selectedYear) {
+      const yearInt = parseInt(selectedYear);
+      
+      // Get year-based conditional sections
+      const conditionalSectionsResult = await pool.query(`
+        SELECT * FROM conditional_sections 
+        WHERE form_id = $1 AND is_active = true
+      `, [formId]);
+
+      // Filter based on year conditions
+      const matchingYearConditions = conditionalSectionsResult.rows.filter(row => {
+        const conditionValue = row.condition_value;
+        
+        try {
+          switch (row.condition_type) {
+            case 'year_equals':
+              const targetYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+              return yearInt === targetYear;
+              
+            case 'year_less_equal':
+              const maxYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+              return yearInt <= maxYear;
+              
+            case 'year_greater_equal':
+              const minYear = typeof conditionValue === 'string' ? parseInt(conditionValue) : conditionValue;
+              return yearInt >= minYear;
+              
+            case 'year_between':
+              if (typeof conditionValue === 'string' && conditionValue.includes('-')) {
+                const [startYear, endYear] = conditionValue.split('-').map(y => parseInt(y.trim()));
+                return yearInt >= startYear && yearInt <= endYear;
+              }
+              return false;
+              
+            default:
+              return false;
+          }
+        } catch (error) {
+          console.error(`Error processing year condition for row ${row.id}:`, error);
+          return false;
+        }
+      });
+
+      // Collect year-based section IDs
+      matchingYearConditions.forEach(row => {
+        yearBasedSectionIds = [...yearBasedSectionIds, ...row.section_ids];
+      });
+      yearBasedSectionIds = [...new Set(yearBasedSectionIds)];
+    }
+
+    // Step 2: Get role-based conditional sections
+    let roleBasedSectionIds = [];
+    
+    if (selectedRole) {
+      const roleBasedSectionsResult = await pool.query(`
+        SELECT * FROM role_based_conditional_sections 
+        WHERE form_id = $1 AND is_active = true AND condition_value = $2
+      `, [formId, selectedRole]);
+
+      // Collect role-based section IDs
+      roleBasedSectionsResult.rows.forEach(row => {
+        roleBasedSectionIds = [...roleBasedSectionIds, ...row.section_ids];
+      });
+      roleBasedSectionIds = [...new Set(roleBasedSectionIds)];
+    }
+
+    // Step 3: Determine final section IDs to show
+    let finalSectionIds = [];
+    
+    // If both year and role conditions exist, show union (all sections from both conditions)
+    if (yearBasedSectionIds.length > 0 && roleBasedSectionIds.length > 0) {
+      finalSectionIds = [...new Set([...yearBasedSectionIds, ...roleBasedSectionIds])];
+    }
+    // If only year conditions exist, show year-based sections
+    else if (yearBasedSectionIds.length > 0) {
+      finalSectionIds = yearBasedSectionIds;
+    }
+    // If only role conditions exist, show role-based sections
+    else if (roleBasedSectionIds.length > 0) {
+      finalSectionIds = roleBasedSectionIds;
+    }
+    // If neither exist, show all sections (or could be empty based on business logic)
+    else {
+      // Get all sections for this form
+      const allSectionsResult = await pool.query(`
+        SELECT id FROM form_sections WHERE form_id = $1 ORDER BY order_number
+      `, [formId]);
+      finalSectionIds = allSectionsResult.rows.map(row => row.id);
+    }
+
+    // Step 4: Get the actual sections and questions
+    if (finalSectionIds.length > 0) {
+      const sectionsResult = await pool.query(`
+        SELECT * FROM form_sections 
+        WHERE form_id = $1 AND id = ANY($2)
+        ORDER BY order_number
+      `, [formId, finalSectionIds]);
+
+      const questionsResult = await pool.query(`
+        SELECT * FROM form_questions 
+        WHERE form_id = $1 AND section_id = ANY($2)
+        ORDER BY order_number
+      `, [formId, finalSectionIds]);
+
+      const questions = questionsResult.rows.map(q => ({
+        ...q,
+        options: q.options || null
+      }));
+
+      res.json({
+        sections: sectionsResult.rows,
+        questions: questions,
+        debug: {
+          yearBasedSectionIds,
+          roleBasedSectionIds,
+          finalSectionIds,
+          selectedYear,
+          selectedRole
+        }
+      });
+    } else {
+      res.json({
+        sections: [],
+        questions: [],
+        debug: {
+          yearBasedSectionIds,
+          roleBasedSectionIds,
+          finalSectionIds,
+          selectedYear,
+          selectedRole
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Combined conditional sections error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
