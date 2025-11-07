@@ -427,7 +427,8 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
           let sectionDatabaseId;
 
           // If section has an existing database ID, update it directly
-          if (section.id && Number.isInteger(section.id)) {
+          // Check if it's a valid PostgreSQL integer ID (not a timestamp)
+          if (section.id && Number.isInteger(section.id) && section.id <= 2147483647 && section.id > 0) {
             console.log(`📝 Updating existing section with ID ${section.id}: "${sectionName}"`);
             await pool.query(`
               UPDATE form_sections 
@@ -513,7 +514,8 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
         }
 
         // If question has an existing database ID, update it directly
-        if (q.id && Number.isInteger(q.id)) {
+        // Check if it's a valid PostgreSQL integer ID (not a timestamp)
+        if (q.id && Number.isInteger(q.id) && q.id <= 2147483647 && q.id > 0) {
           console.log(`📝 Updating existing question with ID ${q.id} at position ${orderNumber}`);
           
           questionResult = await pool.query(`
