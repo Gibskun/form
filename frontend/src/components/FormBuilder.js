@@ -447,8 +447,19 @@ const FormBuilder = () => {
   const updateScaleOrder = async (questionId, newScaleOrder) => {
     try {
       await superadminAPI.updateScaleOrder(formId, questionId, newScaleOrder);
-      // Reload assessment questions to reflect changes
+      
+      // Update both assessment questions AND main questions state
       loadAssessmentQuestions();
+      
+      // CRITICAL FIX: Also update the main questions state to preserve scale order during form submission
+      setQuestions(prevQuestions => 
+        prevQuestions.map(q => 
+          q.id === questionId 
+            ? { ...q, scale_order: newScaleOrder }
+            : q
+        )
+      );
+      
       alert('Scale order updated successfully!');
     } catch (error) {
       console.error('Failed to update scale order:', error);
@@ -1885,6 +1896,15 @@ const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
     setScaleOrder([1, 2, 3, 4, 5]);
   };
 
+  // Quick sort functions
+  const handleSequentialSort = () => {
+    setScaleOrder([1, 2, 3, 4, 5]);
+  };
+
+  const handleReverseSort = () => {
+    setScaleOrder([5, 4, 3, 2, 1]);
+  };
+
   const moveItem = (fromIndex, toIndex) => {
     const newOrder = [...scaleOrder];
     const [movedItem] = newOrder.splice(fromIndex, 1);
@@ -1900,17 +1920,66 @@ const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
       padding: '15px', 
       marginBottom: '15px' 
     }}>
-      <div style={{ marginBottom: '10px' }}>
+      {/* Enhanced Question Display */}
+      <div style={{ marginBottom: '15px' }}>
         <h4 style={{ margin: '0 0 5px 0', color: '#374151' }}>
           Question {question.questionOrder}: {question.questionTextEn}
         </h4>
         {question.questionTextAr && (
-          <p style={{ margin: '0', color: '#6b7280', fontSize: '14px' }}>
+          <p style={{ margin: '0 0 10px 0', color: '#6b7280', fontSize: '14px' }}>
             Arabic: {question.questionTextAr}
           </p>
         )}
+        
+        {/* Left and Right Statements Display */}
+        {(question.leftStatement || question.rightStatement) && (
+          <div style={{ 
+            backgroundColor: '#f8fafc', 
+            border: '1px solid #e2e8f0', 
+            borderRadius: '4px', 
+            padding: '10px',
+            marginTop: '8px'
+          }}>
+            <div style={{ fontSize: '14px', fontWeight: '600', color: '#475569', marginBottom: '5px' }}>
+              Assessment Scale Endpoints:
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '15px' }}>
+              {question.leftStatement && (
+                <div style={{ flex: '1' }}>
+                  <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>
+                    Left (1): 
+                  </span>
+                  <span style={{ fontSize: '14px', color: '#334155' }}>
+                    {question.leftStatement}
+                  </span>
+                  {question.leftStatementAr && (
+                    <div style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic', marginTop: '2px' }}>
+                      Arabic: {question.leftStatementAr}
+                    </div>
+                  )}
+                </div>
+              )}
+              {question.rightStatement && (
+                <div style={{ flex: '1', textAlign: 'right' }}>
+                  <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>
+                    Right (5): 
+                  </span>
+                  <span style={{ fontSize: '14px', color: '#334155' }}>
+                    {question.rightStatement}
+                  </span>
+                  {question.rightStatementAr && (
+                    <div style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic', marginTop: '2px' }}>
+                      Arabic: {question.rightStatementAr}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
+      {/* Current Scale Order Display */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
         <strong style={{ color: '#374151' }}>Current Scale Order:</strong>
         <div style={{ display: 'flex', gap: '5px' }}>
@@ -1933,7 +2002,7 @@ const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
       </div>
 
       {!isEditing ? (
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button
             type="button"
             onClick={() => setIsEditing(true)}
@@ -1951,6 +2020,41 @@ const ScaleOrderEditor = ({ question, onUpdateScaleOrder }) => {
         </div>
       ) : (
         <div>
+          {/* Quick Sort Buttons */}
+          <div style={{ 
+            marginBottom: '15px', 
+            padding: '12px', 
+            backgroundColor: '#fef3c7', 
+            borderRadius: '6px',
+            border: '1px solid #f59e0b'
+          }}>
+            <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#92400e', fontWeight: '600' }}>
+              ⚡ Quick Sort Options:
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={handleSequentialSort}
+                className="btn btn-sm btn-outline-success"
+                style={{ fontWeight: '600' }}
+              >
+                📈 Sequential (1→2→3→4→5)
+              </button>
+              <button
+                type="button"
+                onClick={handleReverseSort}
+                className="btn btn-sm btn-outline-warning"
+                style={{ fontWeight: '600' }}
+              >
+                📉 Reverse (5→4→3→2→1)
+              </button>
+            </div>
+            <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#92400e' }}>
+              Use these buttons for quick reordering, then fine-tune with drag or arrow buttons below.
+            </p>
+          </div>
+
+          {/* Manual Drag/Arrow Controls */}
           <div style={{ marginBottom: '15px' }}>
             <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#6b7280' }}>
               Drag to reorder or use buttons:

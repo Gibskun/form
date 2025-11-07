@@ -1685,6 +1685,10 @@ app.get('/api/superadmin/forms/:formId/assessment-questions',
           id,
           question_text,
           question_text_id,
+          left_statement,
+          right_statement,
+          left_statement_id,
+          right_statement_id,
           scale_order,
           order_number
         FROM form_questions 
@@ -1698,6 +1702,10 @@ app.get('/api/superadmin/forms/:formId/assessment-questions',
         id: row.id,
         questionTextEn: row.question_text,
         questionTextAr: row.question_text_id || '', // Using text_id as placeholder for Arabic
+        leftStatement: row.left_statement,
+        rightStatement: row.right_statement,
+        leftStatementAr: row.left_statement_id || '',
+        rightStatementAr: row.right_statement_id || '',
         scaleOrder: row.scale_order || [1, 2, 3, 4, 5],
         questionOrder: row.order_number
       }));
