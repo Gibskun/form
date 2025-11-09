@@ -277,6 +277,23 @@ app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =
       }
     }
 
+    // Handle multiple management lists
+    const { managementLists } = req.body;
+    if (managementLists && managementLists.length > 0) {
+      for (let i = 0; i < managementLists.length; i++) {
+        const list = managementLists[i];
+        // Map frontend section IDs to database IDs
+        const mappedSectionIds = list.section_ids.map(frontendId => {
+          return sectionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO management_lists (form_id, list_name, list_description, management_names, section_ids, display_order)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [formId, list.list_name, list.list_description || null, list.management_names, mappedSectionIds, i + 1]);
+      }
+    }
+
     res.json({
       ...formResult.rows[0],
       message: 'Form created successfully'
@@ -332,6 +349,11 @@ app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       SELECT * FROM role_based_conditional_sections WHERE form_id = $1 AND is_active = true
     `, [form.id]);
 
+    // Get management lists
+    const managementListsResult = await pool.query(`
+      SELECT * FROM management_lists WHERE form_id = $1 AND is_active = true ORDER BY display_order
+    `, [form.id]);
+
     res.json({
       ...form,
       sections: sectionsResult.rows,
@@ -341,7 +363,8 @@ app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       })),
       conditional_questions: conditionalResult.rows,
       conditional_sections: conditionalSectionsResult.rows,
-      role_based_conditional_sections: roleBasedConditionalSectionsResult.rows
+      role_based_conditional_sections: roleBasedConditionalSectionsResult.rows,
+      management_lists: managementListsResult.rows
     });
   } catch (error) {
     console.error('Get form error:', error);
@@ -656,6 +679,28 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       }
     }
 
+    // Handle multiple management lists
+    const { managementLists } = req.body;
+    
+    // Delete existing management lists
+    await pool.query('DELETE FROM management_lists WHERE form_id = $1', [formId]);
+    
+    // Insert new management lists with mapped IDs
+    if (managementLists && managementLists.length > 0) {
+      for (let i = 0; i < managementLists.length; i++) {
+        const list = managementLists[i];
+        // Map frontend section IDs to database IDs
+        const mappedSectionIds = list.section_ids.map(frontendId => {
+          return sectionIdMap[frontendId] || frontendId;
+        });
+        
+        await pool.query(`
+          INSERT INTO management_lists (form_id, list_name, list_description, management_names, section_ids, display_order)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [formId, list.list_name, list.list_description || null, list.management_names, mappedSectionIds, i + 1]);
+      }
+    }
+
     res.json({
       ...formResult.rows[0],
       message: 'Form updated successfully'
@@ -713,7 +758,12 @@ app.get('/api/form/:uniqueLink', async (req, res) => {
       SELECT * FROM role_based_conditional_sections WHERE form_id = $1 AND is_active = true
     `, [form.id]);
 
-    console.log(`📋 Found ${sectionsResult.rows.length} sections, ${questionsResult.rows.length} questions, ${conditionalResult.rows.length} conditional rules, ${conditionalSectionsResult.rows.length} conditional sections, and ${roleBasedConditionalSectionsResult.rows.length} role-based conditional sections`);
+    // Get management lists
+    const managementListsResult = await pool.query(`
+      SELECT * FROM management_lists WHERE form_id = $1 AND is_active = true ORDER BY display_order
+    `, [form.id]);
+
+    console.log(`📋 Found ${sectionsResult.rows.length} sections, ${questionsResult.rows.length} questions, ${conditionalResult.rows.length} conditional rules, ${conditionalSectionsResult.rows.length} conditional sections, ${roleBasedConditionalSectionsResult.rows.length} role-based conditional sections, and ${managementListsResult.rows.length} management lists`);
 
     res.json({
       ...form,
@@ -724,7 +774,8 @@ app.get('/api/form/:uniqueLink', async (req, res) => {
       })),
       conditional_questions: conditionalResult.rows,
       conditional_sections: conditionalSectionsResult.rows,
-      role_based_conditional_sections: roleBasedConditionalSectionsResult.rows
+      role_based_conditional_sections: roleBasedConditionalSectionsResult.rows,
+      management_lists: managementListsResult.rows
     });
   } catch (error) {
     console.error('❌ Get form error:', error.message);
@@ -744,7 +795,10 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
       management_evaluation,
       management_responses,
       evaluated_people,
-      role_selection 
+      role_selection,
+      multiple_lists,
+      management_lists_data,
+      organized_responses
     } = req.body;
 
     console.log('📥 Form submission received:', {
@@ -792,7 +846,10 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
         role_selection: role_selection || 'management',
         management_evaluation: true,
         evaluated_people: evaluated_people || [],
-        management_responses: management_responses
+        management_responses: management_responses,
+        multiple_lists: multiple_lists || false,
+        management_lists_data: management_lists_data || null,
+        organized_responses: organized_responses || null
       };
     } else {
       // For regular flow, use standard responses
@@ -859,6 +916,231 @@ app.get('/api/admin/forms/:formId/responses', authenticateToken, requireAdmin, a
   }
 });
 
+// Helper function to create enhanced management list export
+async function createEnhancedManagementExport(workbook, responses, questions, questionMapping) {
+  console.log('📊 Creating enhanced management list export...');
+  
+  // Create summary sheet
+  const summarySheet = workbook.addWorksheet('Summary');
+  
+  // Summary sheet headers
+  summarySheet.addRow(['Evaluator Name', 'Evaluator Email', 'Submission Date', 'Management Lists Evaluated', 'Total People Evaluated']);
+  summarySheet.getRow(1).font = { bold: true };
+  summarySheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+  
+  // Process each management response
+  responses.forEach(response => {
+    const responseData = response.responses;
+    
+    if (responseData.multiple_lists && responseData.organized_responses) {
+      const organizedData = responseData.organized_responses;
+      const listNames = Object.keys(organizedData);
+      const totalPeople = responseData.evaluated_people ? responseData.evaluated_people.length : 0;
+      
+      // Add summary row
+      summarySheet.addRow([
+        response.respondent_name,
+        response.respondent_email,
+        response.submitted_at.toISOString().split('T')[0],
+        listNames.join(', '),
+        totalPeople
+      ]);
+      
+      // Create separate sheet for each management list
+      listNames.forEach(listName => {
+        const listData = organizedData[listName];
+        const sheetName = listName.substring(0, 31); // Excel sheet name limit
+        
+        const listSheet = workbook.addWorksheet(sheetName);
+        
+        // Headers for this list
+        const peopleNames = Object.keys(listData.people);
+        const sectionNames = Object.keys(listData.sections);
+        
+        if (peopleNames.length > 0 && sectionNames.length > 0) {
+          // Create headers: Person, Section, Question, Answer
+          listSheet.addRow(['Evaluator', 'Person Being Evaluated', 'Section', 'Question', 'Answer']);
+          listSheet.getRow(1).font = { bold: true };
+          listSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB3D9FF' } };
+          
+          // Add data rows
+          peopleNames.forEach(personName => {
+            const personData = listData.people[personName];
+            
+            Object.keys(personData).forEach(sectionName => {
+              const sectionResponses = personData[sectionName];
+              
+              Object.entries(sectionResponses).forEach(([questionId, answer]) => {
+                const questionObj = questionMapping[questionId];
+                const questionText = questionObj ? questionObj.text : `Question ${questionId}`;
+                
+                listSheet.addRow([
+                  response.respondent_name,
+                  personName,
+                  sectionName,
+                  questionText,
+                  answer || ''
+                ]);
+              });
+            });
+          });
+          
+          // Auto-fit columns
+          listSheet.columns.forEach(column => {
+            column.width = Math.max(column.width || 10, 20);
+          });
+        }
+      });
+    }
+  });
+  
+  // Auto-fit summary sheet columns
+  summarySheet.columns.forEach(column => {
+    column.width = Math.max(column.width || 10, 25);
+  });
+}
+
+// Helper function to create standard export
+async function createStandardExport(workbook, worksheetName, responses, questions, questionMapping, allQuestionIds, specialFields) {
+  const worksheet = workbook.addWorksheet(worksheetName);
+  
+  // Get all questions in proper order
+  const allQuestions = questions.map(q => ({
+    id: q.id,
+    text: q.question_text || `Question ${q.order_number}`,
+    order: q.order_number
+  }));
+
+  // Add headers for remaining questions not in current form
+  const remainingQuestionIds = Array.from(allQuestionIds).filter(id => 
+    !allQuestions.find(q => q.id.toString() === id.toString())
+  );
+
+  remainingQuestionIds.forEach(id => {
+    const questionObj = questionMapping[id.toString()];
+    if (questionObj) {
+      allQuestions.push({
+        id: parseInt(id),
+        text: questionObj.text,
+        order: questionObj.order || 999
+      });
+    }
+  });
+
+  // Sort questions by order
+  allQuestions.sort((a, b) => a.order - b.order);
+
+  const allHeaders = [
+    'Name',
+    'Email', 
+    'Submitted At',
+    ...allQuestions.map(q => q.text),
+    ...Array.from(specialFields).map(field => {
+      if (field === 'year_selection') return 'Year Selection';
+      if (field === 'conditional_year') return 'Conditional Year';
+      return field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    })
+  ];
+
+  worksheet.getRow(1).values = allHeaders;
+  worksheet.getRow(1).font = { bold: true };
+  worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+
+  // Add data rows with comprehensive mapping
+  responses.forEach(response => {
+    const responseData = response.responses;
+    const row = [
+      response.respondent_name,
+      response.respondent_email,
+      response.submitted_at.toISOString().split('T')[0],
+      // Map all questions in order
+      ...allQuestions.map(q => {
+        const answer = responseData[q.id.toString()] || '';
+        
+        // Handle management response structure
+        if (typeof answer === 'object' && answer !== null && !Array.isArray(answer)) {
+          // Check if this looks like a management response structure
+          const entries = Object.entries(answer);
+          if (entries.length > 0) {
+            const isManagementStructure = entries.some(([key, val]) => 
+              typeof key === 'string' && 
+              key.includes('_') && 
+              typeof val === 'object' && 
+              val !== null
+            );
+            
+            if (isManagementStructure) {
+              // Format management responses for Excel
+              return entries.map(([personSection, answers]) => {
+                const [personName, sectionNum] = personSection.split('_');
+                const sectionNumber = parseInt(sectionNum) + 1;
+                
+                if (typeof answers === 'object' && answers !== null) {
+                  const answerEntries = Object.entries(answers);
+                  return answerEntries.map(([qId, answerValue]) => {
+                    // Find question text for this ID
+                    const questionObj = questionMapping[qId];
+                    const questionText = questionObj ? questionObj.text : `Question ${qId}`;
+                    return `${personName} (Sec ${sectionNumber}): ${questionText} = ${answerValue}`;
+                  }).join(' | ');
+                }
+                return `${personName} (Sec ${sectionNumber}): ${JSON.stringify(answers)}`;
+              }).join(' || ');
+            }
+          }
+          // Fallback for other objects
+          return JSON.stringify(answer);
+        }
+        
+        return Array.isArray(answer) ? answer.join(', ') : (answer || '');
+      }),
+      // Map special fields
+      ...Array.from(specialFields).map(field => {
+        const answer = responseData[field] || '';
+        
+        // Handle management response structure in special fields too
+        if (typeof answer === 'object' && answer !== null && !Array.isArray(answer)) {
+          const entries = Object.entries(answer);
+          if (entries.length > 0) {
+            const isManagementStructure = entries.some(([key, val]) => 
+              typeof key === 'string' && 
+              key.includes('_') && 
+              typeof val === 'object' && 
+              val !== null
+            );
+            
+            if (isManagementStructure) {
+              return entries.map(([personSection, answers]) => {
+                const [personName, sectionNum] = personSection.split('_');
+                const sectionNumber = parseInt(sectionNum) + 1;
+                
+                if (typeof answers === 'object' && answers !== null) {
+                  const answerEntries = Object.entries(answers);
+                  return answerEntries.map(([qId, answerValue]) => {
+                    const questionObj = questionMapping[qId];
+                    const questionText = questionObj ? questionObj.text : `Question ${qId}`;
+                    return `${personName} (Sec ${sectionNumber}): ${questionText} = ${answerValue}`;
+                  }).join(' | ');
+                }
+                return `${personName} (Sec ${sectionNumber}): ${JSON.stringify(answers)}`;
+              }).join(' || ');
+            }
+          }
+          return JSON.stringify(answer);
+        }
+        
+        return Array.isArray(answer) ? answer.join(', ') : (answer || '');
+      })
+    ];
+    worksheet.addRow(row);
+  });
+
+  // Auto-fit columns
+  worksheet.columns.forEach(column => {
+    column.width = Math.max(column.width || 10, 15);
+  });
+}
+
 // Export form responses to Excel (admin)
 app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -921,35 +1203,6 @@ app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, asyn
 
     console.log(`📊 Export with filters - Role: ${role || 'All'}, Year: ${year || 'All'}, Found: ${responses.length} responses`);
 
-    // Create Excel workbook
-    const workbook = new ExcelJS.Workbook();
-    let worksheetName = 'Form Responses';
-    if (role || year) {
-      const filters = [];
-      if (role) filters.push(role.charAt(0).toUpperCase() + role.slice(1));
-      if (year) filters.push(year);
-      worksheetName += ` (${filters.join(', ')})`;
-    }
-    const worksheet = workbook.addWorksheet(worksheetName);
-
-    // Define headers
-    const headers = [
-      'Name',
-      'Email', 
-      'Submitted At',
-      ...questions.map(q => q.question_text || `Question ${q.order_number}`)
-    ];
-
-    worksheet.addRow(headers);
-
-    // Style headers
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFE0E0E0' }
-    };
-
     // Collect all question IDs ever used in responses for comprehensive export
     const allQuestionIds = new Set();
     const specialFields = new Set();
@@ -1000,141 +1253,44 @@ app.get('/api/admin/forms/:formId/export', authenticateToken, requireAdmin, asyn
           });
         } catch (err) {
           console.warn('Could not fetch historical questions:', err.message);
+          // Add placeholder entries for missing questions
+          historicalQuestionIds.forEach(id => {
+            if (!questionMapping[id]) {
+              questionMapping[id] = {
+                id: parseInt(id),
+                text: `Historical Question ${id}`,
+                order: 999,
+                type: 'missing'
+              };
+            }
+          });
         }
       }
     }
 
-    // Add fallback entries for completely orphaned question IDs
-    allQuestionIds.forEach(id => {
-      if (!questionMapping[id]) {
-        questionMapping[id] = {
-          id: parseInt(id),
-          text: `Question ID ${id} (Historical)`,
-          order: 999,
-          type: 'orphaned'
-        };
-      }
-    });
+    // Create Excel workbook with enhanced management list support
+    const workbook = new ExcelJS.Workbook();
+    let worksheetName = 'Form Responses';
+    
+    if (role || year) {
+      const filters = [];
+      if (role) filters.push(role.charAt(0).toUpperCase() + role.slice(1));
+      if (year) filters.push(year);
+      worksheetName += ` (${filters.join(', ')})`;
+    }
 
-    // Create ordered list of all questions for headers
-    const allQuestions = Object.values(questionMapping).sort((a, b) => {
-      const typePriority = { current: 1, historical: 2, other_form: 3, orphaned: 4 };
-      if (typePriority[a.type] !== typePriority[b.type]) {
-        return typePriority[a.type] - typePriority[b.type];
-      }
-      return a.order - b.order;
-    });
+    // Check if any responses have multiple management lists
+    const hasMultipleManagementLists = responses.some(response => 
+      response.responses.multiple_lists === true && response.responses.organized_responses
+    );
 
-    // Update headers to include all questions + special fields
-    const allHeaders = [
-      'Name',
-      'Email', 
-      'Submitted At',
-      ...allQuestions.map(q => q.text),
-      ...Array.from(specialFields).map(field => {
-        if (field === 'year_selection') return 'Year Selection';
-        if (field === 'conditional_year') return 'Conditional Year';
-        return field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      })
-    ];
-
-    worksheet.getRow(1).values = allHeaders;
-
-    // Add data rows with comprehensive mapping
-    responses.forEach(response => {
-      const responseData = response.responses;
-      const row = [
-        response.respondent_name,
-        response.respondent_email,
-        response.submitted_at.toISOString().split('T')[0],
-        // Map all questions in order
-        ...allQuestions.map(q => {
-          const answer = responseData[q.id.toString()] || '';
-          
-          // Handle management response structure
-          if (typeof answer === 'object' && answer !== null && !Array.isArray(answer)) {
-            // Check if this looks like a management response structure
-            const entries = Object.entries(answer);
-            if (entries.length > 0) {
-              const isManagementStructure = entries.some(([key, val]) => 
-                typeof key === 'string' && 
-                key.includes('_') && 
-                typeof val === 'object' && 
-                val !== null
-              );
-              
-              if (isManagementStructure) {
-                // Format management responses for Excel
-                return entries.map(([personSection, answers]) => {
-                  const [personName, sectionNum] = personSection.split('_');
-                  const sectionNumber = parseInt(sectionNum) + 1;
-                  
-                  if (typeof answers === 'object' && answers !== null) {
-                    const answerEntries = Object.entries(answers);
-                    return answerEntries.map(([qId, answerValue]) => {
-                      // Find question text for this ID
-                      const questionObj = questionMapping[qId];
-                      const questionText = questionObj ? questionObj.text : `Question ${qId}`;
-                      return `${personName} (Sec ${sectionNumber}): ${questionText} = ${answerValue}`;
-                    }).join(' | ');
-                  }
-                  return `${personName} (Sec ${sectionNumber}): ${JSON.stringify(answers)}`;
-                }).join(' || ');
-              }
-            }
-            // Fallback for other objects
-            return JSON.stringify(answer);
-          }
-          
-          return Array.isArray(answer) ? answer.join(', ') : (answer || '');
-        }),
-        // Map special fields
-        ...Array.from(specialFields).map(field => {
-          const answer = responseData[field] || '';
-          
-          // Handle management response structure in special fields too
-          if (typeof answer === 'object' && answer !== null && !Array.isArray(answer)) {
-            const entries = Object.entries(answer);
-            if (entries.length > 0) {
-              const isManagementStructure = entries.some(([key, val]) => 
-                typeof key === 'string' && 
-                key.includes('_') && 
-                typeof val === 'object' && 
-                val !== null
-              );
-              
-              if (isManagementStructure) {
-                return entries.map(([personSection, answers]) => {
-                  const [personName, sectionNum] = personSection.split('_');
-                  const sectionNumber = parseInt(sectionNum) + 1;
-                  
-                  if (typeof answers === 'object' && answers !== null) {
-                    const answerEntries = Object.entries(answers);
-                    return answerEntries.map(([qId, answerValue]) => {
-                      const questionObj = questionMapping[qId];
-                      const questionText = questionObj ? questionObj.text : `Question ${qId}`;
-                      return `${personName} (Sec ${sectionNumber}): ${questionText} = ${answerValue}`;
-                    }).join(' | ');
-                  }
-                  return `${personName} (Sec ${sectionNumber}): ${JSON.stringify(answers)}`;
-                }).join(' || ');
-              }
-            }
-            return JSON.stringify(answer);
-          }
-          
-          return Array.isArray(answer) ? answer.join(', ') : (answer || '');
-        })
-      ];
-      worksheet.addRow(row);
-    });
-
-    console.log(`📊 Excel export: ${responses.length} responses, ${allQuestions.length} total questions (${questions.length} current + ${allQuestions.length - questions.length} historical)`);
-
-    // Auto-fit columns
-    worksheet.columns.forEach(column => {
-      column.width = Math.max(column.width || 10, 15);
-    });
+    if (hasMultipleManagementLists) {
+      // Create separate sheets for management lists + summary sheet
+      await createEnhancedManagementExport(workbook, responses, questions, questionMapping);
+    } else {
+      // Create standard single sheet export
+      await createStandardExport(workbook, worksheetName, responses, questions, questionMapping, allQuestionIds, specialFields);
+    }
 
     // Set response headers for download
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

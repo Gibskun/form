@@ -31,6 +31,12 @@ const FormFiller = () => {
   const [currentSectionForPerson, setCurrentSectionForPerson] = useState(0);
   const [managementResponses, setManagementResponses] = useState({});
   const [isManagementFlow, setIsManagementFlow] = useState(false);
+  
+  // Multiple management lists state
+  const [managementLists, setManagementLists] = useState([]);
+  const [selectedManagementList, setSelectedManagementList] = useState(null);
+  const [currentListIndex, setCurrentListIndex] = useState(0);
+  const [isMultipleManagementFlow, setIsMultipleManagementFlow] = useState(false);
 
 
   useEffect(() => {
@@ -153,44 +159,90 @@ const FormFiller = () => {
     setSelectedRole(role);
     setResponses({ ...responses, role_selection: role });
 
-    // Special handling for Management role - bypass year logic
+    // Special handling for Management role - check for multiple management lists
     if (role === 'management') {
-      try {
-        setLoadingSections(true);
-        setError('');
+      // Check if the form has multiple management lists
+      if (form.management_lists && form.management_lists.length > 0) {
+        setManagementLists(form.management_lists);
+        setIsMultipleManagementFlow(true);
+        console.log('🏢 Multiple management lists found:', form.management_lists);
         
-        // For Management role, only use role-based sections (ignore year conditions)
-        const response = await formAPI.getRoleBasedSections(uniqueLink, role);
-        setConditionalSections(response.data || { sections: [], questions: [] });
+        // AUTO-PROCESS ALL MANAGEMENT LISTS (no selection step)
+        // Set up to evaluate all lists sequentially
+        setCurrentListIndex(0); // Start with first list
+        const firstList = form.management_lists[0];
         
-        console.log('🏢 Management role selected - bypassing year logic');
-        console.log('📋 Loaded management sections:', response.data);
+        // Extract names from the first list
+        const names = firstList.management_names
+          .split('\n')
+          .map(name => name.trim())
+          .filter(name => name.length > 0)
+          .map(name => name.replace(/^\d+\.\s*/, '')); // Remove numbering if present
         
-        if (response.data && response.data.sections && response.data.sections.length > 0) {
-          console.log(`✓ Loaded ${response.data.sections.length} sections for Management role`);
-          console.log(`✓ Loaded ${response.data.questions.length} questions for Management role`);
+        setManagementNames(names);
+        
+        // Get sections and questions for the first management list
+        const listSections = form.sections.filter(section => 
+          firstList.section_ids.includes(section.id)
+        );
+        const listQuestions = form.questions.filter(question => 
+          firstList.section_ids.includes(question.section_id)
+        );
+        
+        setConditionalSections({
+          sections: listSections,
+          questions: listQuestions
+        });
+        
+        // Initialize management flow state
+        setIsManagementFlow(true);
+        setSelectedManagementList(firstList);
+        setCurrentPersonIndex(0);
+        setCurrentSectionForPerson(0);
+        
+        console.log('👥 Starting with first management list:', firstList.list_name);
+        console.log('👤 Names to evaluate:', names);
+        
+        return; // Stop here, ready to start evaluation
+      } else {
+        // Fall back to legacy single management flow
+        try {
+          setLoadingSections(true);
+          setError('');
           
-          // Extract management names from the role-based conditional sections
-          const managementSection = response.data.managementConfig;
-          if (managementSection && managementSection.management_names) {
-            const names = managementSection.management_names
-              .split('\n')
-              .map(name => name.trim())
-              .filter(name => name.length > 0)
-              .map(name => name.replace(/^\d+\.\s*/, '')); // Remove numbering if present
+          // For Management role, only use role-based sections (ignore year conditions)
+          const response = await formAPI.getRoleBasedSections(uniqueLink, role);
+          setConditionalSections(response.data || { sections: [], questions: [] });
+          
+          console.log('🏢 Management role selected - bypassing year logic');
+          console.log('📋 Loaded management sections:', response.data);
+          
+          if (response.data && response.data.sections && response.data.sections.length > 0) {
+            console.log(`✓ Loaded ${response.data.sections.length} sections for Management role`);
+            console.log(`✓ Loaded ${response.data.questions.length} questions for Management role`);
             
-            setManagementNames(names);
-            setIsManagementFlow(true);
-            setCurrentPersonIndex(0);
-            setCurrentSectionForPerson(0);
-            console.log('👥 Management names loaded:', names);
+            // Extract management names from the role-based conditional sections
+            const managementSection = response.data.managementConfig;
+            if (managementSection && managementSection.management_names) {
+              const names = managementSection.management_names
+                .split('\n')
+                .map(name => name.trim())
+                .filter(name => name.length > 0)
+                .map(name => name.replace(/^\d+\.\s*/, '')); // Remove numbering if present
+              
+              setManagementNames(names);
+              setIsManagementFlow(true);
+              setCurrentPersonIndex(0);
+              setCurrentSectionForPerson(0);
+              console.log('👥 Management names loaded:', names);
+            }
           }
+        } catch (error) {
+          console.error('Failed to fetch management sections:', error);
+          setConditionalSections({ sections: [], questions: [] });
+        } finally {
+          setLoadingSections(false);
         }
-      } catch (error) {
-        console.error('Failed to fetch management sections:', error);
-        setConditionalSections({ sections: [], questions: [] });
-      } finally {
-        setLoadingSections(false);
       }
       return; // Exit early for Management role
     }
@@ -264,15 +316,27 @@ const FormFiller = () => {
       return;
     }
     
-    // For Management role, skip the year/role combination check
+    // For Management role, skip selection step and go directly to questions
     if (selectedRole === 'management') {
-      if (!conditionalSections.questions || conditionalSections.questions.length === 0) {
-        setError('No questions found for Management role. Please contact administrator.');
+      if (isMultipleManagementFlow) {
+        // Skip management list selection step - auto process all lists
+        if (!conditionalSections.questions || conditionalSections.questions.length === 0) {
+          setError('No questions found for Management role. Please contact administrator.');
+          return;
+        }
+        setError('');
+        setCurrentStep(3); // Go directly to questions
+        return;
+      } else {
+        // Legacy single management flow
+        if (!conditionalSections.questions || conditionalSections.questions.length === 0) {
+          setError('No questions found for Management role. Please contact administrator.');
+          return;
+        }
+        setError('');
+        setCurrentStep(3);
         return;
       }
-      setError('');
-      setCurrentStep(3);
-      return;
     }
     
     // Check if we're in combined mode and have sections loaded (for Employee/Team Lead)
@@ -316,7 +380,48 @@ const FormFiller = () => {
       setCurrentPersonIndex(currentPersonIndex + 1);
       setCurrentSectionForPerson(0);
     }
-    // If we're at the last section of the last person, form is complete (handled in render)
+    // If we're at the last section of the last person
+    else {
+      // Check if there are more management lists to process
+      if (isMultipleManagementFlow && currentListIndex < managementLists.length - 1) {
+        // Move to next management list
+        const nextListIndex = currentListIndex + 1;
+        const nextList = managementLists[nextListIndex];
+        
+        console.log(`🏢 Moving to next management list: ${nextList.list_name}`);
+        
+        // Extract names from the next list
+        const names = nextList.management_names
+          .split('\n')
+          .map(name => name.trim())
+          .filter(name => name.length > 0)
+          .map(name => name.replace(/^\d+\.\s*/, '')); // Remove numbering if present
+        
+        // Get sections and questions for the next management list
+        const listSections = form.sections.filter(section => 
+          nextList.section_ids.includes(section.id)
+        );
+        const listQuestions = form.questions.filter(question => 
+          nextList.section_ids.includes(question.section_id)
+        );
+        
+        // Update state for next list
+        setCurrentListIndex(nextListIndex);
+        setSelectedManagementList(nextList);
+        setManagementNames(names);
+        setConditionalSections({
+          sections: listSections,
+          questions: listQuestions
+        });
+        
+        // Reset person and section indices for the new list
+        setCurrentPersonIndex(0);
+        setCurrentSectionForPerson(0);
+        
+        console.log(`👥 Starting evaluation of ${names.length} people in list: ${nextList.list_name}`);
+      }
+      // If this was the last management list, form is complete (handled in render)
+    }
   };
 
   const handleManagementPrevious = () => {
@@ -336,12 +441,15 @@ const FormFiller = () => {
 
   const handleResponseChange = (questionId, value, questionType) => {
     if (isManagementFlow) {
-      // For management flow, store responses per person per section
+      // For management flow, store responses per list per person per section
+      const listKey = isMultipleManagementFlow ? `list_${currentListIndex}` : 'legacy';
       const personKey = `${managementNames[currentPersonIndex]}_${currentSectionForPerson}`;
+      const fullKey = `${listKey}_${personKey}`;
+      
       setManagementResponses({
         ...managementResponses,
-        [personKey]: {
-          ...managementResponses[personKey],
+        [fullKey]: {
+          ...managementResponses[fullKey],
           [questionId]: value
         }
       });
@@ -354,6 +462,55 @@ const FormFiller = () => {
     }
   };
 
+  // Organize multiple management list responses for better Excel export
+  const organizeMultipleListResponses = () => {
+    if (!isMultipleManagementFlow || !managementLists) return null;
+
+    const organized = {};
+    
+    managementLists.forEach((list, listIndex) => {
+      organized[list.list_name] = {
+        list_description: list.list_description,
+        people: {},
+        sections: {}
+      };
+
+      // Get sections for this list
+      const listSections = form.sections.filter(section => 
+        list.section_ids.includes(section.id)
+      );
+
+      // Get names for this list
+      const listNames = list.management_names
+        .split('\n')
+        .map(name => name.trim())
+        .filter(name => name.length > 0)
+        .map(name => name.replace(/^\d+\.\s*/, ''));
+
+      // Organize responses by person and section
+      listNames.forEach(personName => {
+        organized[list.list_name].people[personName] = {};
+        
+        listSections.forEach((section, sectionIndex) => {
+          const listKey = `list_${listIndex}`;
+          const personKey = `${personName}_${sectionIndex}`;
+          const fullKey = `${listKey}_${personKey}`;
+          
+          if (managementResponses[fullKey]) {
+            if (!organized[list.list_name].sections[section.name || section.section_name]) {
+              organized[list.list_name].sections[section.name || section.section_name] = {};
+            }
+            
+            organized[list.list_name].people[personName][section.name || section.section_name] = managementResponses[fullKey];
+            organized[list.list_name].sections[section.name || section.section_name][personName] = managementResponses[fullKey];
+          }
+        });
+      });
+    });
+
+    return organized;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -362,6 +519,9 @@ const FormFiller = () => {
     try {
       if (isManagementFlow) {
         console.log('🏢 Management flow submission - Debug info:', {
+          isMultipleManagementFlow,
+          currentListIndex,
+          totalLists: managementLists.length,
           managementNames,
           currentPersonIndex,
           currentSectionForPerson,
@@ -374,14 +534,34 @@ const FormFiller = () => {
           throw new Error('Please answer at least some questions before submitting the assessment.');
         }
 
-        // Management flow submission - compile all responses
+        // Collect all evaluated people across all management lists
+        let allEvaluatedPeople = [];
+        if (isMultipleManagementFlow) {
+          // Collect names from all management lists
+          managementLists.forEach(list => {
+            const names = list.management_names
+              .split('\n')
+              .map(name => name.trim())
+              .filter(name => name.length > 0)
+              .map(name => name.replace(/^\d+\.\s*/, ''));
+            allEvaluatedPeople = [...allEvaluatedPeople, ...names];
+          });
+        } else {
+          allEvaluatedPeople = managementNames;
+        }
+
+        // Management flow submission - compile all responses with better organization
         const managementPayload = {
           ...userInfo,
           role_selection: 'management',
           management_evaluation: true,
           evaluator_name: userInfo.respondent_name,
-          evaluated_people: managementNames,
-          management_responses: managementResponses
+          evaluated_people: allEvaluatedPeople,
+          management_responses: managementResponses,
+          multiple_lists: isMultipleManagementFlow,
+          management_lists_data: isMultipleManagementFlow ? managementLists : null,
+          // Add organized response structure for better Excel export
+          organized_responses: isMultipleManagementFlow ? organizeMultipleListResponses() : null
         };
 
         await formAPI.submitForm(uniqueLink, managementPayload);
@@ -455,9 +635,11 @@ const FormFiller = () => {
     let value;
     
     if (isManagementFlow) {
-      // For management flow, get response for current person and section
+      // For management flow, get response for current list, person and section
+      const listKey = isMultipleManagementFlow ? `list_${currentListIndex}` : 'legacy';
       const personKey = `${managementNames[currentPersonIndex]}_${currentSectionForPerson}`;
-      value = managementResponses[personKey]?.[question.id] || '';
+      const fullKey = `${listKey}_${personKey}`;
+      value = managementResponses[fullKey]?.[question.id] || '';
     } else {
       // Regular flow
       value = responses[question.id] || '';
@@ -1470,10 +1652,15 @@ const FormFiller = () => {
                           <p style={{ margin: '0', fontSize: '14px', color: '#6c757d' }}>
                             Section {currentSectionForPerson + 1} of {Object.keys(getQuestionsBySections()).length} 
                             • Person {currentPersonIndex + 1} of {managementNames.length}
+                            {isMultipleManagementFlow && (
+                              <> • List "{selectedManagementList?.list_name}" ({currentListIndex + 1} of {managementLists.length})</>
+                            )}
                           </p>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>Progress</div>
+                          <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>
+                            {isMultipleManagementFlow ? 'Overall Progress' : 'Progress'}
+                          </div>
                           <div style={{ 
                             width: '100px', 
                             height: '8px', 
@@ -1482,7 +1669,20 @@ const FormFiller = () => {
                             overflow: 'hidden'
                           }}>
                             <div style={{
-                              width: `${((currentPersonIndex * Object.keys(getQuestionsBySections()).length + currentSectionForPerson + 1) / (Object.keys(getQuestionsBySections()).length * managementNames.length)) * 100}%`,
+                              width: `${(() => {
+                                if (isMultipleManagementFlow) {
+                                  // Calculate overall progress across all management lists
+                                  const totalSections = Object.keys(getQuestionsBySections()).length;
+                                  const totalPeoplePerList = managementNames.length;
+                                  const completedLists = currentListIndex;
+                                  const currentListProgress = (currentPersonIndex * totalSections + currentSectionForPerson + 1) / (totalSections * totalPeoplePerList);
+                                  const overallProgress = (completedLists + currentListProgress) / managementLists.length;
+                                  return overallProgress * 100;
+                                } else {
+                                  // Single list progress
+                                  return ((currentPersonIndex * Object.keys(getQuestionsBySections()).length + currentSectionForPerson + 1) / (Object.keys(getQuestionsBySections()).length * managementNames.length)) * 100;
+                                }
+                              })()}%`,
                               height: '100%',
                               backgroundColor: '#007bff',
                               transition: 'width 0.3s ease'
@@ -1560,9 +1760,10 @@ const FormFiller = () => {
                               {managementNames[currentPersonIndex]} - Section {currentSectionForPerson + 1}
                             </div>
                             
-                            {/* Check if this is the last person in the last section */}
+                            {/* Check if this is the last person in the last section of the last list */}
                             {currentPersonIndex === managementNames.length - 1 && 
-                             currentSectionForPerson === Object.keys(getQuestionsBySections()).length - 1 ? (
+                             currentSectionForPerson === Object.keys(getQuestionsBySections()).length - 1 &&
+                             (!isMultipleManagementFlow || currentListIndex === managementLists.length - 1) ? (
                               <button
                                 type="submit"
                                 className="btn btn-success"

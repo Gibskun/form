@@ -610,6 +610,27 @@ const ensureSchemaUpdates = async () => {
       console.log('ℹ️  management_names column already exists or error:', err.message);
     }
     
+    // Create management_lists table for multiple management lists support
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS management_lists (
+          id SERIAL PRIMARY KEY,
+          form_id INTEGER REFERENCES forms(id) ON DELETE CASCADE,
+          list_name VARCHAR(200) NOT NULL,
+          list_description TEXT,
+          management_names TEXT NOT NULL, -- List of names, one per line
+          section_ids INTEGER[] NOT NULL, -- Sections that show questions about each name
+          display_order INTEGER DEFAULT 1,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('✅ Created management_lists table');
+    } catch (err) {
+      console.log('ℹ️  management_lists table already exists or error:', err.message);
+    }
+    
     console.log('✅ Schema updates completed');
     
   } catch (err) {

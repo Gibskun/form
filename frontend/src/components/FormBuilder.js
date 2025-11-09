@@ -16,7 +16,8 @@ const FormBuilder = () => {
   const [conditionalQuestions, setConditionalQuestions] = useState([]);
   const [conditionalSections, setConditionalSections] = useState([]);
   const [roleBasedConditionalSections, setRoleBasedConditionalSections] = useState([]);
-  const [managementNames, setManagementNames] = useState({}); // Store names for each Management role condition
+  const [managementNames, setManagementNames] = useState({}); // Store names for each Management role condition (legacy)
+  const [managementLists, setManagementLists] = useState([]); // Multiple management lists support
   const [loading, setLoading] = useState(false);
   const [loadingForm, setLoadingForm] = useState(isEditMode);
   const [error, setError] = useState('');
@@ -91,11 +92,24 @@ const FormBuilder = () => {
       setConditionalQuestions(response.data.conditional_questions || []);
       setConditionalSections(response.data.conditional_sections || []);
       setRoleBasedConditionalSections(response.data.role_based_conditional_sections || []);
+      setManagementLists(response.data.management_lists || []);
+      
+      // Extract and set management names from role-based conditional sections (legacy support)
+      const managementNamesMap = {};
+      (response.data.role_based_conditional_sections || []).forEach((rbcs, index) => {
+        if (rbcs.condition_value === 'management' && rbcs.management_names) {
+          managementNamesMap[index] = rbcs.management_names;
+        }
+      });
+      setManagementNames(managementNamesMap);
+      
       console.log('📋 Set questions:', response.data.questions?.length || 0);
       console.log('📂 Set sections:', response.data.sections?.length || 0);
       console.log('🔀 Set conditional questions:', response.data.conditional_questions?.length || 0);
       console.log('🔀 Set conditional sections:', response.data.conditional_sections?.length || 0);
       console.log('👤 Set role-based conditional sections:', response.data.role_based_conditional_sections?.length || 0);
+      console.log('👥 Set management names:', managementNamesMap);
+      console.log('📝 Set management lists:', response.data.management_lists?.length || 0);
     } catch (error) {
       console.error('❌ Error loading form:', error);
       setError('Failed to load form data: ' + (error.response?.data?.error || error.message));
@@ -373,6 +387,34 @@ const FormBuilder = () => {
     setRoleBasedConditionalSections(updated);
   };
 
+  // Management lists functions
+  const addManagementList = () => {
+    const newList = {
+      id: Date.now(), // Temporary ID for frontend
+      list_name: `Management List ${managementLists.length + 1}`,
+      list_description: '',
+      management_names: '',
+      section_ids: []
+    };
+    setManagementLists([...managementLists, newList]);
+  };
+
+  const updateManagementList = (index, field, value) => {
+    const updated = [...managementLists];
+    updated[index][field] = value;
+    setManagementLists(updated);
+  };
+
+  const removeManagementList = (index) => {
+    setManagementLists(managementLists.filter((_, i) => i !== index));
+  };
+
+  const updateManagementListSectionIds = (listIndex, sectionIds) => {
+    const updated = [...managementLists];
+    updated[listIndex].section_ids = sectionIds;
+    setManagementLists(updated);
+  };
+
   // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -407,12 +449,14 @@ const FormBuilder = () => {
         sections: sections,
         conditionalQuestions: conditionalQuestions,
         conditionalSections: conditionalSections,
-        roleBasedConditionalSections: roleBasedConditionalSectionsWithNames
+        roleBasedConditionalSections: roleBasedConditionalSectionsWithNames,
+        managementLists: managementLists
       };
 
       console.log('FormBuilder sending sections:', JSON.stringify(sections, null, 2));
       console.log('FormBuilder sending conditional sections:', JSON.stringify(conditionalSections, null, 2));
       console.log('FormBuilder sending role-based conditional sections:', JSON.stringify(roleBasedConditionalSections, null, 2));
+      console.log('FormBuilder sending management lists:', JSON.stringify(managementLists, null, 2));
 
       if (isEditMode) {
         await adminAPI.updateForm(formId, payload);
@@ -1855,6 +1899,198 @@ const FormBuilder = () => {
                 <p style={{ marginTop: '15px', color: '#6c757d', fontSize: '14px' }}>
                   💡 <strong>Tip:</strong> Create role-based conditions to show different <strong>sections</strong> to Employees, Team Leads, or Management.<br/>
                   Users will select their role before seeing form questions!
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Management Lists Section */}
+          <div className="card">
+            <h3 style={{ marginBottom: '20px', color: '#495057' }}>
+              👥 Management Lists (Multiple Round-Robin Evaluations)
+            </h3>
+            <p style={{ marginBottom: '20px', color: '#6c757d' }}>
+              Create multiple lists of people to be evaluated, each with their own dedicated sections. 
+              This allows you to have different evaluation groups (e.g., "Senior Management", "Team Leads", "Department Heads") 
+              with different sets of questions.
+            </p>
+
+            {managementLists.map((list, listIndex) => (
+              <div key={list.id || listIndex} style={{
+                border: '2px solid #007bff',
+                borderRadius: '12px',
+                padding: '20px',
+                marginBottom: '20px',
+                backgroundColor: '#f8f9ff'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                  <h4 style={{ margin: '0', color: '#007bff' }}>
+                    👥 Management List {listIndex + 1}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => removeManagementList(listIndex)}
+                    style={{
+                      backgroundColor: '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 10px',
+                      cursor: 'pointer',
+                      fontSize: '12px'
+                    }}
+                  >
+                    🗑️ Remove
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                  <div>
+                    <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
+                      List Name:
+                    </label>
+                    <input
+                      type="text"
+                      value={list.list_name || ''}
+                      onChange={(e) => updateManagementList(listIndex, 'list_name', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px'
+                      }}
+                      placeholder="e.g., Senior Management, Team Leads"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
+                      Description (Optional):
+                    </label>
+                    <input
+                      type="text"
+                      value={list.list_description || ''}
+                      onChange={(e) => updateManagementList(listIndex, 'list_description', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px'
+                      }}
+                      placeholder="e.g., Evaluation of senior leadership team"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
+                    📋 List of People to Evaluate:
+                  </label>
+                  <div style={{
+                    backgroundColor: '#f8f9fa',
+                    padding: '15px',
+                    borderRadius: '8px',
+                    border: '1px solid #dee2e6'
+                  }}>
+                    <textarea
+                      value={list.management_names || ''}
+                      onChange={(e) => updateManagementList(listIndex, 'management_names', e.target.value)}
+                      placeholder={`Enter the list of people to be evaluated, one per line:\n\n1. John Smith\n2. Jane Doe\n3. Mike Johnson\n\nOr simply:\nJohn Smith\nJane Doe\nMike Johnson`}
+                      style={{
+                        width: '100%',
+                        minHeight: '120px',
+                        padding: '12px',
+                        border: '1px solid #ced4da',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        fontFamily: 'monospace',
+                        resize: 'vertical'
+                      }}
+                      rows={6}
+                    />
+                    <div style={{ 
+                      marginTop: '10px', 
+                      fontSize: '13px', 
+                      color: '#6c757d',
+                      backgroundColor: '#e9ecef',
+                      padding: '8px',
+                      borderRadius: '4px'
+                    }}>
+                      💡 <strong>Instructions:</strong> Enter the names of people who will be evaluated in this round-robin assessment. 
+                      Each person will be evaluated for all questions in the selected sections.
+                      <br/><strong>Format:</strong> One name per line (numbering is optional).
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
+                    Select sections for "{list.list_name || `Management List ${listIndex + 1}`}":
+                  </label>
+                  <div style={{
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    padding: '15px',
+                    backgroundColor: '#fff',
+                    maxHeight: '200px',
+                    overflowY: 'auto'
+                  }}>
+                    {sections.length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                        {sections.map((section) => (
+                          <label key={section.id} style={{ display: 'flex', alignItems: 'center', padding: '5px' }}>
+                            <input
+                              type="checkbox"
+                              checked={(list.section_ids || []).includes(section.id)}
+                              onChange={(e) => {
+                                const currentIds = list.section_ids || [];
+                                const newIds = e.target.checked
+                                  ? [...currentIds, section.id]
+                                  : currentIds.filter(id => id !== section.id);
+                                updateManagementListSectionIds(listIndex, newIds);
+                              }}
+                              style={{ marginRight: '8px' }}
+                            />
+                            <span style={{ fontSize: '14px' }}>
+                              📂 {section.name || section.section_name || `Section ${section.id}`}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ color: '#6c757d', margin: '0', textAlign: 'center' }}>
+                        📝 Add sections first to set up management lists
+                      </p>
+                    )}
+                  </div>
+                  {(list.section_ids || []).length > 0 && (
+                    <p style={{ fontSize: '12px', color: '#28a745', marginTop: '8px' }}>
+                      ✅ {(list.section_ids || []).length} section(s) selected for this management list
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div style={{ textAlign: 'center', marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={addManagementList}
+                style={{
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  padding: '12px 24px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}
+              >
+                👥 Add New Management List
+              </button>
+              {managementLists.length === 0 && (
+                <p style={{ marginTop: '15px', color: '#6c757d', fontSize: '14px' }}>
+                  💡 <strong>Tip:</strong> Create management lists to set up round-robin evaluations for different groups of people.<br/>
+                  Each list can have its own set of questions and sections!
                 </p>
               )}
             </div>
