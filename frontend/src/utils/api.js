@@ -19,6 +19,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Add response interceptor for better error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 413) {
+      console.error('❌ Request payload too large. Try reducing form complexity or contact support.');
+      error.message = 'Form data is too large. Please try reducing the number of questions or complexity and try again.';
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Auth API
 export const authAPI = {
   login: (credentials) => api.post('/api/admin/login', credentials),

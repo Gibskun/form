@@ -440,11 +440,41 @@ const FormBuilder = () => {
         throw new Error('At least one question is required');
       }
 
-      // Prepare questions data
-      const questionsData = (questions || []).map((q, index) => ({
-        ...q,
-        order_number: index + 1,
-        options: q.options && q.options.length > 0 ? q.options : null
+      // Prepare questions data - remove unnecessary fields to reduce payload size
+      const questionsData = (questions || []).map((q, index) => {
+        // Only include essential fields to reduce payload size
+        const cleanQuestion = {
+          id: q.id,
+          question_text: q.question_text,
+          question_text_id: q.question_text_id,
+          question_type: q.question_type,
+          left_statement: q.left_statement || '',
+          right_statement: q.right_statement || '',
+          left_statement_id: q.left_statement_id || '',
+          right_statement_id: q.right_statement_id || '',
+          is_required: Boolean(q.is_required),
+          order_number: index + 1,
+          section_id: q.section_id || null
+        };
+
+        // Only include options if they exist and are non-empty
+        if (q.options && Array.isArray(q.options) && q.options.length > 0) {
+          cleanQuestion.options = q.options.filter(opt => opt.text && opt.text.trim());
+        }
+
+        // Only include scale_order for assessment questions
+        if (q.question_type === 'assessment' && q.scale_order) {
+          cleanQuestion.scale_order = q.scale_order;
+        }
+
+        return cleanQuestion;
+      });
+
+      // Clean sections data - remove unnecessary fields
+      const cleanSections = (sections || []).map(section => ({
+        id: section.id,
+        name: section.name || section.section_name,
+        description: section.description || section.section_description || ''
       }));
 
       // Prepare role-based conditional sections with management names
@@ -454,19 +484,24 @@ const FormBuilder = () => {
       }));
 
       const payload = {
-        ...formData,
+        title: formData.title,
+        description: formData.description,
+        form_type: formData.form_type,
         questions: questionsData,
-        sections: sections,
+        sections: cleanSections,
         conditionalQuestions: conditionalQuestions,
         conditionalSections: conditionalSections,
         roleBasedConditionalSections: roleBasedConditionalSectionsWithNames,
         managementLists: managementLists
       };
 
-      console.log('FormBuilder sending sections:', JSON.stringify(sections, null, 2));
-      console.log('FormBuilder sending conditional sections:', JSON.stringify(conditionalSections, null, 2));
-      console.log('FormBuilder sending role-based conditional sections:', JSON.stringify(roleBasedConditionalSections, null, 2));
-      console.log('FormBuilder sending management lists:', JSON.stringify(managementLists, null, 2));
+      // Log payload size for debugging
+      const payloadSize = JSON.stringify(payload).length;
+      console.log(`📦 Payload size: ${payloadSize} bytes (${(payloadSize/1024/1024).toFixed(2)} MB)`);
+      
+      if (payloadSize > 10 * 1024 * 1024) { // Warn if over 10MB
+        console.warn('⚠️ Large payload detected. Consider optimizing form structure.');
+      }
 
       if (isEditMode) {
         await adminAPI.updateForm(formId, payload);

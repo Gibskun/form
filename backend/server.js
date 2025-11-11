@@ -13,7 +13,19 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increased from default 100kb to 50mb for large form data
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Also handle URL encoded data
+
+// Add request size logging for debugging
+app.use((req, res, next) => {
+  if (req.method === 'PUT' || req.method === 'POST') {
+    const contentLength = req.get('Content-Length');
+    if (contentLength && parseInt(contentLength) > 1000000) { // Log requests over 1MB
+      console.log(`🔍 Large request detected: ${req.method} ${req.path} - ${contentLength} bytes`);
+    }
+  }
+  next();
+});
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
