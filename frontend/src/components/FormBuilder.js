@@ -128,7 +128,7 @@ const FormBuilder = () => {
   // Add new section
   const addSection = () => {
     const newSection = {
-      id: Date.now(),
+      id: -Date.now(), // Negative timestamp to mark as new section
       name: `Section ${sections.length + 1}`,
       description: ''
     };
@@ -188,7 +188,7 @@ const FormBuilder = () => {
   // Add new question
   const addQuestion = (sectionId = null) => {
     const newQuestion = {
-      id: Date.now(),
+      id: -Date.now(), // Negative timestamp to mark as new question
       question_text: '',
       question_text_id: '',
       question_type: 'text',
@@ -247,8 +247,18 @@ const FormBuilder = () => {
   // Duplicate question
   const duplicateQuestion = (index) => {
     const questionToDuplicate = { ...questions[index] };
-    questionToDuplicate.id = Date.now(); // New unique ID
+    
+    // Use a negative timestamp for duplicated questions to clearly mark them as new
+    // This ensures they won't conflict with existing database IDs (which are positive)
+    // and makes it clear to the backend that this is a new question
+    questionToDuplicate.id = -Date.now(); // Negative timestamp for duplicates
     questionToDuplicate.question_text = questionToDuplicate.question_text + ' (Copy)';
+    
+    // Deep copy options array to avoid reference issues
+    if (questionToDuplicate.options && questionToDuplicate.options.length > 0) {
+      questionToDuplicate.options = questionToDuplicate.options.map(opt => ({ ...opt }));
+    }
+    
     const updatedQuestions = [...questions];
     updatedQuestions.splice(index + 1, 0, questionToDuplicate);
     setQuestions(updatedQuestions);
@@ -460,11 +470,13 @@ const FormBuilder = () => {
 
       if (isEditMode) {
         await adminAPI.updateForm(formId, payload);
+        // Reload form data to get proper database IDs for any new/duplicated questions
+        await loadFormData();
+        alert('Form updated successfully!');
       } else {
         await adminAPI.createForm(payload);
+        navigate('/admin/dashboard');
       }
-      
-      navigate('/admin/dashboard');
     } catch (error) {
       setError(error.response?.data?.error || error.message || 
                (isEditMode ? 'Failed to update form' : 'Failed to create form'));

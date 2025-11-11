@@ -449,9 +449,18 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
           
           let sectionDatabaseId;
 
-          // If section has an existing database ID, update it directly
-          // Check if it's a valid PostgreSQL integer ID (not a timestamp)
-          if (section.id && Number.isInteger(section.id) && section.id <= 2147483647 && section.id > 0) {
+          // Check if section has a valid database ID that exists in our database
+          let isExistingDatabaseSection = false;
+          if (section.id && Number.isInteger(section.id) && section.id > 0 && section.id <= 2147483647) {
+            // Verify the ID actually exists in the database
+            const existingCheck = await pool.query(
+              'SELECT id FROM form_sections WHERE id = $1 AND form_id = $2',
+              [section.id, formId]
+            );
+            isExistingDatabaseSection = existingCheck.rows.length > 0;
+          }
+
+          if (isExistingDatabaseSection) {
             console.log(`📝 Updating existing section with ID ${section.id}: "${sectionName}"`);
             await pool.query(`
               UPDATE form_sections 
@@ -462,10 +471,11 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
             sectionDatabaseId = section.id;
             sectionIdMap[section.id] = section.id;
           } else {
-            // Check if there's an existing section at this position
+            // Check if there's an existing section at this position that we can update
             const existingSection = existingSectionsMap[orderNumber];
             
-            if (existingSection) {
+            if (existingSection && (!section.id || section.id >= 0)) {
+              // Only update existing section if we don't have a new section marker (negative ID)
               console.log(`📝 Updating existing section at position ${orderNumber} with ID ${existingSection.id}: "${sectionName}"`);
               await pool.query(`
                 UPDATE form_sections 
@@ -479,7 +489,8 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
               }
             } else {
               // Create new section
-              console.log(`➕ Creating new section at position ${orderNumber}: "${sectionName}"`);
+              const isNewSection = section.id && section.id < 0;
+              console.log(`➕ Creating new section at position ${orderNumber}${isNewSection ? ' (new)' : ''}: "${sectionName}"`);
               const sectionResult = await pool.query(`
                 INSERT INTO form_sections (form_id, section_name, section_description, order_number)
                 VALUES ($1, $2, $3, $4)
@@ -536,9 +547,18 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
           scaleOrder = q.scale_order || existingQuestion?.scale_order || [1, 2, 3, 4, 5];
         }
 
-        // If question has an existing database ID, update it directly
-        // Check if it's a valid PostgreSQL integer ID (not a timestamp)
-        if (q.id && Number.isInteger(q.id) && q.id <= 2147483647 && q.id > 0) {
+        // Check if question has a valid database ID that exists in our database
+        let isExistingDatabaseQuestion = false;
+        if (q.id && Number.isInteger(q.id) && q.id > 0 && q.id <= 2147483647) {
+          // Verify the ID actually exists in the database
+          const existingCheck = await pool.query(
+            'SELECT id FROM form_questions WHERE id = $1 AND form_id = $2',
+            [q.id, formId]
+          );
+          isExistingDatabaseQuestion = existingCheck.rows.length > 0;
+        }
+
+        if (isExistingDatabaseQuestion) {
           console.log(`📝 Updating existing question with ID ${q.id} at position ${orderNumber}`);
           
           questionResult = await pool.query(`
@@ -559,10 +579,11 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
           questionDatabaseId = q.id;
           questionIdMap[q.id] = q.id;
         } else {
-          // Check if there's an existing question at this position
+          // Check if there's an existing question at this position that we can update
           const existingQuestion = existingQuestionsMap[orderNumber];
           
-          if (existingQuestion) {
+          if (existingQuestion && (!q.id || q.id >= 0)) {
+            // Only update existing question if we don't have a duplicate marker (negative ID)
             console.log(`📝 Updating existing question ID ${existingQuestion.id} at position ${orderNumber}`);
             
             questionResult = await pool.query(`
@@ -585,8 +606,9 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
               questionIdMap[q.id] = existingQuestion.id;
             }
           } else {
-            // Create new question (only for truly new questions)
-            console.log(`🆕 Creating new question at position ${orderNumber}`);
+            // Create new question for truly new questions (including duplicates with negative timestamp IDs)
+            const isDuplicate = q.id && q.id < 0;
+            console.log(`🆕 Creating new question at position ${orderNumber}${isDuplicate ? ' (duplicate)' : ''}`);
             
             questionResult = await pool.query(`
               INSERT INTO form_questions 
