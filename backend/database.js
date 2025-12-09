@@ -121,6 +121,7 @@ const initializeDatabase = async () => {
         is_active BOOLEAN DEFAULT true,
         is_public BOOLEAN DEFAULT true,
         requires_login BOOLEAN DEFAULT false,
+        require_user_info BOOLEAN DEFAULT true,
         max_submissions INTEGER DEFAULT NULL,
         submission_deadline TIMESTAMP DEFAULT NULL,
         thank_you_message TEXT,
@@ -629,6 +630,17 @@ const ensureSchemaUpdates = async () => {
       console.log('✅ Created management_lists table');
     } catch (err) {
       console.log('ℹ️  management_lists table already exists or error:', err.message);
+    }
+    
+    // Add require_user_info column to forms table if it doesn't exist
+    try {
+      await pool.query(`
+        ALTER TABLE forms 
+        ADD COLUMN IF NOT EXISTS require_user_info BOOLEAN DEFAULT true
+      `);
+      console.log('✅ Added require_user_info column to forms table');
+    } catch (err) {
+      console.log('ℹ️  require_user_info column already exists or error:', err.message);
     }
     
     console.log('✅ Schema updates completed');

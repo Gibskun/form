@@ -183,15 +183,15 @@ app.get('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) =>
 // Create new form (admin)
 app.post('/api/admin/forms', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { title, description, form_type, questions, conditionalQuestions, sections } = req.body;
+    const { title, description, form_type, questions, conditionalQuestions, sections, require_user_info } = req.body;
     const unique_link = uuidv4();
 
-    // Insert form
+    // Insert form with require_user_info setting (defaults to true if not provided)
     const formResult = await pool.query(`
-      INSERT INTO forms (title, description, form_type, created_by, unique_link)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO forms (title, description, form_type, created_by, unique_link, require_user_info)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [title, description, form_type, req.user.id, unique_link]);
+    `, [title, description, form_type, req.user.id, unique_link, require_user_info !== undefined ? require_user_info : true]);
 
     const formId = formResult.rows[0].id;
 
@@ -388,7 +388,7 @@ app.get('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
 app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { formId } = req.params;
-    const { title, description, form_type, questions, conditionalQuestions, sections } = req.body;
+    const { title, description, form_type, questions, conditionalQuestions, sections, require_user_info } = req.body;
     
     console.log('PUT /api/admin/forms/:formId - Received sections:', JSON.stringify(sections, null, 2));
     console.log('PUT /api/admin/forms/:formId - Processing sections with IDs:', sections?.map(s => ({ id: s.id, name: s.name || s.section_name })));
@@ -402,13 +402,13 @@ app.put('/api/admin/forms/:formId', authenticateToken, requireAdmin, async (req,
       return res.status(404).json({ error: 'Form not found' });
     }
 
-    // Update form details
+    // Update form details including require_user_info
     const formResult = await pool.query(`
       UPDATE forms 
-      SET title = $1, description = $2, form_type = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
+      SET title = $1, description = $2, form_type = $3, require_user_info = $4, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
       RETURNING *
-    `, [title, description, form_type, formId]);
+    `, [title, description, form_type, require_user_info !== undefined ? require_user_info : true, formId]);
 
     // Get existing questions to preserve IDs and scale_order
     const existingQuestions = await pool.query(`
@@ -848,9 +848,9 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
       evaluated_people
     });
 
-    // Get form
+    // Get form with require_user_info setting
     const formResult = await pool.query(`
-      SELECT id FROM forms WHERE unique_link = $1 AND is_active = true
+      SELECT id, require_user_info FROM forms WHERE unique_link = $1 AND is_active = true
     `, [uniqueLink]);
 
     if (formResult.rows.length === 0) {
@@ -858,17 +858,29 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
     }
 
     const formId = formResult.rows[0].id;
+    const requireUserInfo = formResult.rows[0].require_user_info !== false; // Default to true if not set
 
-    // Check if user already submitted (name + email combination)
-    const existingResponse = await pool.query(`
-      SELECT id FROM form_responses 
-      WHERE form_id = $1 AND respondent_name = $2 AND respondent_email = $3
-    `, [formId, respondent_name, respondent_email]);
+    // Use provided name/email or default to anonymous if not required
+    const finalRespondentName = respondent_name || (requireUserInfo ? null : 'Anonymous');
+    const finalRespondentEmail = respondent_email || (requireUserInfo ? null : `anonymous_${Date.now()}@form.local`);
 
-    if (existingResponse.rows.length > 0) {
-      return res.status(400).json({ 
-        error: 'You have already submitted a response for this form. Each person can only submit once.' 
-      });
+    // Validate user info if required
+    if (requireUserInfo && (!finalRespondentName || !finalRespondentEmail)) {
+      return res.status(400).json({ error: 'Name and email are required for this form' });
+    }
+
+    // Check if user already submitted (only if user info is required and provided)
+    if (requireUserInfo && finalRespondentName && finalRespondentEmail) {
+      const existingResponse = await pool.query(`
+        SELECT id FROM form_responses 
+        WHERE form_id = $1 AND respondent_name = $2 AND respondent_email = $3
+      `, [formId, finalRespondentName, finalRespondentEmail]);
+
+      if (existingResponse.rows.length > 0) {
+        return res.status(400).json({ 
+          error: 'You have already submitted a response for this form. Each person can only submit once.' 
+        });
+      }
     }
 
     // Prepare responses for database
@@ -897,8 +909,9 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
 
     console.log('💾 About to insert into database:', {
       formId,
-      respondent_name,
-      respondent_email,
+      respondent_name: finalRespondentName,
+      respondent_email: finalRespondentEmail,
+      requireUserInfo,
       finalResponsesType: typeof finalResponses,
       finalResponsesKeys: Object.keys(finalResponses),
       finalResponsesStringified: JSON.stringify(finalResponses)
@@ -908,7 +921,7 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
     await pool.query(`
       INSERT INTO form_responses (form_id, respondent_name, respondent_email, responses)
       VALUES ($1, $2, $3, $4)
-    `, [formId, respondent_name, respondent_email, JSON.stringify(finalResponses)]);
+    `, [formId, finalRespondentName, finalRespondentEmail, JSON.stringify(finalResponses)]);
 
     res.json({ message: 'Response submitted successfully' });
   } catch (error) {

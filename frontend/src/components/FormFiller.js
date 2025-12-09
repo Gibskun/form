@@ -41,6 +41,7 @@ const FormFiller = () => {
 
   useEffect(() => {
     fetchForm();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uniqueLink]);
 
   const fetchForm = async () => {
@@ -54,6 +55,30 @@ const FormFiller = () => {
         }
       });
       setForm(response.data);
+      
+      // Check if form has any conditional logic
+      const hasYearConditions = (response.data.conditional_questions && response.data.conditional_questions.length > 0) ||
+                                (response.data.conditional_sections && response.data.conditional_sections.length > 0);
+      const hasRoleConditions = response.data.role_based_conditional_sections && response.data.role_based_conditional_sections.length > 0;
+      const hasManagementLists = response.data.management_lists && response.data.management_lists.length > 0;
+      
+      const hasAnyConditionalLogic = hasYearConditions || hasRoleConditions || hasManagementLists;
+      
+      // If form doesn't require user info, skip to questions directly
+      if (response.data.require_user_info === false) {
+        console.log('📝 Form does not require user info, skipping to questions');
+        setShowQuestions(true);
+        setUserInfo({
+          respondent_name: 'Anonymous',
+          respondent_email: 'anonymous@form.local'
+        });
+      }
+      
+      // If there's no conditional logic, skip directly to step 3 (questions)
+      if (!hasAnyConditionalLogic) {
+        console.log('✅ No conditional logic detected, skipping to questions step');
+        setCurrentStep(3);
+      }
     } catch (error) {
       setError(error.response?.data?.error || 'Form not found');
     } finally {
@@ -63,16 +88,20 @@ const FormFiller = () => {
 
   const handleUserInfoSubmit = async (e) => {
     e.preventDefault();
-    if (!userInfo.respondent_name.trim() || !userInfo.respondent_email.trim()) {
-      setError('Please fill in both name and email');
-      return;
-    }
+    
+    // Check if form requires user info
+    if (form.require_user_info) {
+      if (!userInfo.respondent_name.trim() || !userInfo.respondent_email.trim()) {
+        setError('Please fill in both name and email');
+        return;
+      }
 
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(userInfo.respondent_email)) {
-      setError('Please enter a valid email address');
-      return;
+      // Email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(userInfo.respondent_email)) {
+        setError('Please enter a valid email address');
+        return;
+      }
     }
 
     setError('');
@@ -578,8 +607,15 @@ const FormFiller = () => {
         allQuestionsCount: getQuestionsToShow().length
       });
 
-      // Validate year selection (always required now)
-      if (!selectedYear) {
+      // Check if form has any conditional logic
+      const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                                (form.conditional_sections && form.conditional_sections.length > 0);
+      const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+      const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+      const hasAnyConditionalLogic = hasYearConditions || hasRoleConditions || hasManagementLists;
+
+      // Validate year selection (only if conditional logic exists)
+      if (hasAnyConditionalLogic && !selectedYear) {
         throw new Error('Please select your year of entry before submitting the form');
       }
 
@@ -890,6 +926,19 @@ const FormFiller = () => {
   const getQuestionsToShow = () => {
     if (!form) return [];
     
+    // Check if form has any conditional logic
+    const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                              (form.conditional_sections && form.conditional_sections.length > 0);
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+    const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+    const hasAnyConditionalLogic = hasYearConditions || hasRoleConditions || hasManagementLists;
+    
+    // If NO conditional logic exists, return all form questions directly
+    if (!hasAnyConditionalLogic) {
+      console.log('✅ No conditional logic - returning all form questions:', form.questions?.length || 0);
+      return form.questions || [];
+    }
+    
     // Special handling for Management role - bypass year requirements
     if (selectedRole === 'management') {
       console.log('🏢 Management role - bypassing year requirements');
@@ -907,14 +956,14 @@ const FormFiller = () => {
       return [];
     }
 
-    const hasYearConditions = form.conditional_sections && form.conditional_sections.length > 0;
-    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+    const hasYearConditionsCheck = form.conditional_sections && form.conditional_sections.length > 0;
+    const hasRoleConditionsCheck = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
 
     console.log('🔍 getQuestionsToShow DEBUG:', {
       selectedYear,
       selectedRole,
-      hasYearConditions,
-      hasRoleConditions,
+      hasYearConditions: hasYearConditionsCheck,
+      hasRoleConditions: hasRoleConditionsCheck,
       conditionalSections,
       conditionalSectionsLength: conditionalSections.questions?.length || 0,
       yearBasedSections,
@@ -923,7 +972,7 @@ const FormFiller = () => {
     });
 
     // Check for combined conditional logic (year + role)
-    if (hasYearConditions && hasRoleConditions) {
+    if (hasYearConditionsCheck && hasRoleConditionsCheck) {
       console.log('🎯 Using COMBINED conditional logic path');
       // If role not selected yet, don't show questions
       if (!selectedRole) {
@@ -944,7 +993,7 @@ const FormFiller = () => {
     }
     
     // Check for role-based conditional logic only
-    if (hasRoleConditions && !hasYearConditions) {
+    if (hasRoleConditionsCheck && !hasYearConditionsCheck) {
       // If role not selected yet, don't show questions
       if (!selectedRole) {
         return [];
@@ -961,7 +1010,7 @@ const FormFiller = () => {
     }
 
     // Check for year-based conditional logic only
-    if (hasYearConditions && !hasRoleConditions) {
+    if (hasYearConditionsCheck && !hasRoleConditionsCheck) {
       // Return questions from year-based conditional sections
       if (yearBasedSections.questions && yearBasedSections.questions.length > 0) {
         console.log('✅ Using year-based conditional sections:', yearBasedSections.questions.length, 'questions');
@@ -1096,11 +1145,9 @@ const FormFiller = () => {
   // Initialize sections order when questions are available
   useEffect(() => {
     if (showQuestions && selectedYear) {
-      const questionsBySection = getQuestionsBySections();
-      const sectionNames = Object.keys(questionsBySection);
-      
       setCurrentSectionIndex(0);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showQuestions, selectedYear, selectedRole, conditionalQuestions, conditionalSections, yearBasedSections, form]);
 
   // Get current section data
@@ -1229,7 +1276,7 @@ const FormFiller = () => {
                 value={userInfo.respondent_name}
                 onChange={(e) => setUserInfo({ ...userInfo, respondent_name: e.target.value })}
                 className="form-input"
-                required
+                required={form.require_user_info !== false}
               />
             </div>
 
@@ -1240,7 +1287,7 @@ const FormFiller = () => {
                 value={userInfo.respondent_email}
                 onChange={(e) => setUserInfo({ ...userInfo, respondent_email: e.target.value })}
                 className="form-input"
-                required
+                required={form.require_user_info !== false}
               />
             </div>
 
@@ -1252,25 +1299,37 @@ const FormFiller = () => {
           <>
             {error && <div className="error">{error}</div>}
             
-            {/* Step Navigation Progress Bar */}
-            <div style={{ 
-              marginBottom: '25px', 
-              padding: '20px', 
-              backgroundColor: '#f8f9fa', 
-              borderRadius: '10px',
-              border: '1px solid #e9ecef',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-            }}>
-              <div style={{ textAlign: 'center', marginBottom: '15px' }}>
-                <h4 style={{ margin: '0', color: '#495057' }}>Form Progress</h4>
-                <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#6c757d' }}>
-                  Step {currentStep} of 3
-                </p>
-              </div>
+            {/* Step Navigation Progress Bar - Only show if there's conditional logic */}
+            {(() => {
+              const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                                        (form.conditional_sections && form.conditional_sections.length > 0);
+              const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+              const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+              const hasAnyConditionalLogic = hasYearConditions || hasRoleConditions || hasManagementLists;
               
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              if (!hasAnyConditionalLogic) {
+                return null; // Don't show progress bar if no conditional logic
+              }
+              
+              return (
                 <div style={{ 
-                  display: 'flex', 
+                  marginBottom: '25px', 
+                  padding: '20px', 
+                  backgroundColor: '#f8f9fa', 
+                  borderRadius: '10px',
+                  border: '1px solid #e9ecef',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                }}>
+                  <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+                    <h4 style={{ margin: '0', color: '#495057' }}>Form Progress</h4>
+                    <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#6c757d' }}>
+                      Step {currentStep} of 3
+                    </p>
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ 
+                      display: 'flex', 
                   alignItems: 'center',
                   fontSize: '14px',
                   fontWeight: '600'
@@ -1378,6 +1437,8 @@ const FormFiller = () => {
                 </div>
               </div>
             </div>
+              );
+            })()}
 
             {/* Step 1: Year Selection */}
             {currentStep === 1 && (
@@ -1798,32 +1859,49 @@ const FormFiller = () => {
                 ) : (
                   /* Regular Employee/Team Lead Flow */
                   <div>
-                    <div style={{ 
-                      marginBottom: '20px', 
-                      padding: '15px', 
-                      backgroundColor: '#e3f2fd', 
-                      borderRadius: '8px',
-                      border: '1px solid #bbdefb'
-                    }}>
-                      <h4 style={{ margin: '0 0 8px 0', color: '#1976d2' }}>
-                        📋 Form Questions - {selectedRole === 'employee' ? 'Employee' : selectedRole === 'team_lead' ? 'Team Lead' : 'Management'} ({selectedYear})
-                      </h4>
-                      <p style={{ margin: '0', fontSize: '14px', color: '#424242' }}>
-                        Answer the questions below based on your selected role and year.
-                      </p>
-                    </div>
+                    {/* Only show role/year info if conditional logic exists */}
+                    {(() => {
+                      const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                                                (form.conditional_sections && form.conditional_sections.length > 0);
+                      const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+                      const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+                      const hasAnyConditionalLogic = hasYearConditions || hasRoleConditions || hasManagementLists;
+                      
+                      if (!hasAnyConditionalLogic) {
+                        return null; // Don't show role/year header if no conditional logic
+                      }
+                      
+                      return (
+                        <>
+                          <div style={{ 
+                            marginBottom: '20px', 
+                            padding: '15px', 
+                            backgroundColor: '#e3f2fd', 
+                            borderRadius: '8px',
+                            border: '1px solid #bbdefb'
+                          }}>
+                            <h4 style={{ margin: '0 0 8px 0', color: '#1976d2' }}>
+                              📋 Form Questions - {selectedRole === 'employee' ? 'Employee' : selectedRole === 'team_lead' ? 'Team Lead' : 'Management'} ({selectedYear})
+                            </h4>
+                            <p style={{ margin: '0', fontSize: '14px', color: '#424242' }}>
+                              Answer the questions below based on your selected role and year.
+                            </p>
+                          </div>
 
-                    {/* Back Button */}
-                    <div style={{ marginBottom: '20px' }}>
-                      <button
-                        type="button"
-                        onClick={handleBackToRole}
-                        className="btn btn-outline-secondary"
-                        style={{ fontSize: '14px' }}
-                      >
-                        ← Back to Role Selection
-                      </button>
-                    </div>
+                          {/* Back Button */}
+                          <div style={{ marginBottom: '20px' }}>
+                            <button
+                              type="button"
+                              onClick={handleBackToRole}
+                              className="btn btn-outline-secondary"
+                              style={{ fontSize: '14px' }}
+                            >
+                              ← Back to Role Selection
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })()}
 
                     {/* Section-by-section navigation for regular flow */}
                     {getQuestionsToShow().length > 0 ? (

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { adminAPI, superadminAPI } from '../utils/api';
@@ -9,7 +10,8 @@ const FormBuilder = () => {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    form_type: 'standard'
+    form_type: 'standard',
+    require_user_info: true  // Default to true (require name and email)
   });
   const [questions, setQuestions] = useState([]);
   const [sections, setSections] = useState([]);
@@ -46,6 +48,7 @@ const FormBuilder = () => {
     } else {
       console.log('🆕 Create mode detected');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formId, isEditMode, navigate]);
 
   // Check if current user is superadmin
@@ -71,7 +74,8 @@ const FormBuilder = () => {
       setFormData({
         title: response.data.title,
         description: response.data.description,
-        form_type: response.data.form_type
+        form_type: response.data.form_type,
+        require_user_info: response.data.require_user_info !== undefined ? response.data.require_user_info : true
       });
       
       // Ensure questions have proper structure with null-safe options
@@ -425,6 +429,42 @@ const FormBuilder = () => {
     setManagementLists(updated);
   };
 
+  // Custom JSON replacer to remove circular references and DOM elements
+  const jsonReplacer = (key, value) => {
+    // Skip React internal properties
+    if (key.startsWith('__react') || key.startsWith('_react') || key === 'nativeEvent') {
+      return undefined;
+    }
+    
+    // Skip window, document, and other browser globals
+    if (value === window || value === document || value === navigator) {
+      return undefined;
+    }
+    
+    // Skip if it's a DOM element or Node
+    if (value instanceof HTMLElement || value instanceof Node) {
+      return undefined;
+    }
+    
+    // Skip if it's a Window object
+    if (typeof Window !== 'undefined' && value instanceof Window) {
+      return undefined;
+    }
+    
+    // Skip React Fiber nodes
+    if (value && typeof value === 'object' && (
+      value.hasOwnProperty('$$typeof') ||
+      value.hasOwnProperty('stateNode') ||
+      value.hasOwnProperty('window') || // Window object has window property
+      String(value.constructor?.name).includes('Fiber') ||
+      String(value.constructor?.name).includes('Window')
+    )) {
+      return undefined;
+    }
+    
+    return value;
+  };
+
   // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -470,49 +510,136 @@ const FormBuilder = () => {
         return cleanQuestion;
       });
 
+      // Deep clean all state arrays to remove any DOM elements or React internals
+      const cleanedSections = sections || [];
+      const cleanedConditionalQuestions = conditionalQuestions || [];
+      const cleanedConditionalSections = conditionalSections || [];
+      const cleanedRoleBasedConditionalSections = roleBasedConditionalSections || [];
+      const cleanedManagementLists = managementLists || [];
+
       // Clean sections data - remove unnecessary fields
-      const cleanSections = (sections || []).map(section => ({
+      const cleanSections = (cleanedSections).filter(s => s && typeof s === 'object').map(section => ({
         id: section.id,
         name: section.name || section.section_name,
         description: section.description || section.section_description || ''
       }));
 
+      // Clean conditional questions - ensure valid structure
+      const cleanConditionalQuestions = (cleanedConditionalQuestions).filter(cq => 
+        cq && typeof cq === 'object' && cq.condition_type && cq.condition_value
+      ).map(cq => ({
+        condition_type: String(cq.condition_type),
+        condition_value: String(cq.condition_value),
+        question_ids: Array.isArray(cq.question_ids) ? cq.question_ids.filter(id => id != null) : []
+      }));
+
+      // Clean conditional sections - ensure valid structure
+      const cleanConditionalSections = (cleanedConditionalSections).filter(cs => 
+        cs && typeof cs === 'object' && cs.condition_type && cs.condition_value
+      ).map(cs => ({
+        condition_name: String(cs.condition_name || ''),
+        condition_type: String(cs.condition_type),
+        condition_value: String(cs.condition_value),
+        section_ids: Array.isArray(cs.section_ids) ? cs.section_ids.filter(id => id != null) : []
+      }));
+
       // Prepare role-based conditional sections with management names
-      const roleBasedConditionalSectionsWithNames = roleBasedConditionalSections.map((rbcs, index) => ({
-        ...rbcs,
-        management_names: rbcs.condition_value === 'management' ? managementNames[index] : null
+      const cleanRoleBasedConditionalSections = (cleanedRoleBasedConditionalSections).filter(rbcs => 
+        rbcs && typeof rbcs === 'object' && rbcs.condition_value
+      ).map((rbcs, index) => ({
+        condition_name: String(rbcs.condition_name || ''),
+        condition_type: String(rbcs.condition_type || 'role_equals'),
+        condition_value: String(rbcs.condition_value),
+        section_ids: Array.isArray(rbcs.section_ids) ? rbcs.section_ids.filter(id => id != null) : [],
+        management_names: rbcs.condition_value === 'management' ? (managementNames[index] || null) : null
+      }));
+
+      // Clean management lists - ensure valid structure
+      const cleanManagementLists = (cleanedManagementLists).filter(ml => 
+        ml && typeof ml === 'object' && ml.list_name && ml.management_names
+      ).map(ml => ({
+        list_name: String(ml.list_name),
+        list_description: String(ml.list_description || ''),
+        management_names: String(ml.management_names),
+        section_ids: Array.isArray(ml.section_ids) ? ml.section_ids.filter(id => id != null) : []
       }));
 
       const payload = {
         title: formData.title,
         description: formData.description,
         form_type: formData.form_type,
+        require_user_info: formData.require_user_info,
         questions: questionsData,
         sections: cleanSections,
-        conditionalQuestions: conditionalQuestions,
-        conditionalSections: conditionalSections,
-        roleBasedConditionalSections: roleBasedConditionalSectionsWithNames,
-        managementLists: managementLists
+        conditionalQuestions: cleanConditionalQuestions,
+        conditionalSections: cleanConditionalSections,
+        roleBasedConditionalSections: cleanRoleBasedConditionalSections,
+        managementLists: cleanManagementLists
       };
 
-      // Log payload size for debugging
-      const payloadSize = JSON.stringify(payload).length;
-      console.log(`📦 Payload size: ${payloadSize} bytes (${(payloadSize/1024/1024).toFixed(2)} MB)`);
+      // Debug: Try to stringify each part separately to find the problematic field
+      console.log('🔍 Testing each payload field:');
+      for (const [key, value] of Object.entries(payload)) {
+        try {
+          JSON.stringify(value);
+          console.log(`✅ ${key}: OK`);
+        } catch (e) {
+          console.error(`❌ ${key}: CONTAINS CIRCULAR REFERENCE`, e.message);
+          console.log(`   Type: ${typeof value}, IsArray: ${Array.isArray(value)}`);
+          if (Array.isArray(value) && value.length > 0) {
+            console.log(`   First item:`, Object.keys(value[0] || {}));
+          }
+        }
+      }
+
+      // Log payload size for debugging with circular-safe stringify
+      let payloadSize = 0;
+      let cleanedPayload = payload;
+      try {
+        const payloadString = JSON.stringify(payload, jsonReplacer);
+        cleanedPayload = JSON.parse(payloadString); // Parse back to get clean object
+        payloadSize = payloadString.length;
+        console.log(`📦 Payload size: ${payloadSize} bytes (${(payloadSize/1024/1024).toFixed(2)} MB)`);
+      } catch (serializeError) {
+        console.error('❌ Failed to serialize payload:', serializeError);
+        console.error('🔍 Payload keys:', Object.keys(payload));
+        throw new Error('Failed to prepare form data. Please check for invalid data in your form.');
+      }
+      
+      console.log('📋 Payload summary:', {
+        title: cleanedPayload.title,
+        questionsCount: cleanedPayload.questions?.length,
+        sectionsCount: cleanedPayload.sections?.length,
+        conditionalQuestionsCount: cleanedPayload.conditionalQuestions?.length,
+        conditionalSectionsCount: cleanedPayload.conditionalSections?.length,
+        roleBasedCount: cleanedPayload.roleBasedConditionalSections?.length,
+        managementListsCount: cleanedPayload.managementLists?.length
+      });
       
       if (payloadSize > 10 * 1024 * 1024) { // Warn if over 10MB
         console.warn('⚠️ Large payload detected. Consider optimizing form structure.');
       }
 
       if (isEditMode) {
-        await adminAPI.updateForm(formId, payload);
+        console.log('📝 Updating form with ID:', formId);
+        await adminAPI.updateForm(formId, cleanedPayload);
         // Reload form data to get proper database IDs for any new/duplicated questions
         await loadFormData();
         alert('Form updated successfully!');
       } else {
-        await adminAPI.createForm(payload);
+        console.log('🆕 Creating new form...');
+        const response = await adminAPI.createForm(cleanedPayload);
+        console.log('✅ Form created successfully:', response.data);
         navigate('/admin/dashboard');
       }
     } catch (error) {
+      console.error('❌ Form submission error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        url: error.config?.url
+      });
       setError(error.response?.data?.error || error.message || 
                (isEditMode ? 'Failed to update form' : 'Failed to create form'));
     } finally {
@@ -563,6 +690,7 @@ const FormBuilder = () => {
     if (scaleOrderMode) {
       loadAssessmentQuestions();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scaleOrderMode, isSuperAdmin, isEditMode, formData.form_type]);
 
   if (loadingForm) {
@@ -631,6 +759,49 @@ const FormBuilder = () => {
                 <option value="assessment">Assessment/Rating Form (5-point scale)</option>
               </select>
             </div>
+
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <input
+                  type="checkbox"
+                  checked={formData.require_user_info}
+                  onChange={(e) => setFormData({ ...formData, require_user_info: e.target.checked })}
+                  style={{ width: 'auto', marginTop: '0' }}
+                />
+                <span>Require users to provide name and email before filling the form</span>
+              </label>
+              <small style={{ color: '#666', display: 'block', marginTop: '8px' }}>
+                When unchecked, users can fill the form anonymously without providing their name and email
+              </small>
+            </div>
+          </div>
+
+          {/* Quick Guide Card */}
+          <div className="card" style={{ backgroundColor: '#f0f8ff', border: '2px solid #007bff' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#007bff' }}>📋 Quick Guide: What's Required vs Optional</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div style={{ padding: '15px', backgroundColor: '#fff5f5', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                <h4 style={{ margin: '0 0 10px 0', color: '#dc2626' }}>✅ Required</h4>
+                <ul style={{ margin: '0', paddingLeft: '20px', color: '#495057' }}>
+                  <li>Form Title</li>
+                  <li>At least 1 Question</li>
+                </ul>
+              </div>
+              <div style={{ padding: '15px', backgroundColor: '#d4edda', borderRadius: '8px', border: '1px solid #c3e6cb' }}>
+                <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>✨ Optional (Can Skip)</h4>
+                <ul style={{ margin: '0', paddingLeft: '20px', color: '#495057' }}>
+                  <li>Form Description</li>
+                  <li>Sections (organize questions)</li>
+                  <li>Year-Based Conditional Logic</li>
+                  <li>Section-Based Conditional Logic</li>
+                  <li>Role-Based Conditional Logic</li>
+                  <li>Management Lists</li>
+                </ul>
+              </div>
+            </div>
+            <p style={{ margin: '15px 0 0 0', color: '#6c757d', fontSize: '14px', textAlign: 'center' }}>
+              💡 <strong>Tip:</strong> Start simple with just questions, then add advanced features like sections and conditional logic only if you need them.
+            </p>
           </div>
 
           {/* Superadmin Scale Management */}
@@ -1019,10 +1190,10 @@ const FormBuilder = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                 <div>
                   <h4 style={{ margin: '0 0 5px 0', color: '#6f42c1' }}>
-                    📂 Form Sections
+                    📂 Form Sections <span style={{ fontSize: '13px', fontWeight: 'normal', color: '#28a745', backgroundColor: '#d4edda', padding: '3px 8px', borderRadius: '4px', marginLeft: '8px' }}>✨ Optional</span>
                   </h4>
                   <p style={{ margin: '0', color: '#6c757d', fontSize: '14px' }}>
-                    Organize your questions into sections. Questions can be assigned to sections for better organization.
+                    <strong>Optional:</strong> Organize your questions into sections. Questions can be assigned to sections for better organization, or you can leave them without sections.
                   </p>
                 </div>
                 <button
@@ -1164,7 +1335,7 @@ const FormBuilder = () => {
 
           {/* Conditional Questions */}
           <div className="card">
-            <h2>📅 Year-Based Conditional Logic</h2>
+            <h2>📅 Year-Based Conditional Logic <span style={{ fontSize: '14px', fontWeight: 'normal', color: '#28a745', backgroundColor: '#d4edda', padding: '4px 8px', borderRadius: '4px' }}>✨ Optional</span></h2>
             <div style={{ 
               backgroundColor: '#fff3cd', 
               padding: '15px', 
@@ -1172,9 +1343,10 @@ const FormBuilder = () => {
               marginBottom: '20px',
               border: '1px solid #ffeaa7'
             }}>
-              <h4 style={{ margin: '0 0 10px 0', color: '#856404' }}>How it works:</h4>
+              <h4 style={{ margin: '0 0 10px 0', color: '#856404' }}>⚠️ Optional Feature - Skip if not needed</h4>
               <p style={{ margin: '0', color: '#856404', fontSize: '14px' }}>
-                Users will first be asked "What year did you enter/join?" and based on their answer, 
+                <strong>You can skip this entire section if you don't need conditional logic.</strong><br/>
+                If you do use it: Users will first be asked "What year did you enter/join?" and based on their answer, 
                 only the questions matching your conditions below will be shown. 
                 <strong> Example:</strong> If you set "Year ≤ 2024" and user enters "2023", they'll see those questions.
               </p>
@@ -1441,7 +1613,7 @@ const FormBuilder = () => {
 
           {/* Section-Based Conditional Logic */}
           <div className="card">
-            <h2>📂 Section-Based Conditional Logic</h2>
+            <h2>📂 Section-Based Conditional Logic <span style={{ fontSize: '14px', fontWeight: 'normal', color: '#28a745', backgroundColor: '#d4edda', padding: '4px 8px', borderRadius: '4px' }}>✨ Optional</span></h2>
             <div style={{ 
               backgroundColor: '#e8f5e8', 
               padding: '15px', 
@@ -1449,8 +1621,9 @@ const FormBuilder = () => {
               marginBottom: '20px',
               border: '1px solid #c3e6cb'
             }}>
-              <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>✨ New Feature: Section-Based Logic!</h4>
+              <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>✨ Optional Feature - Skip if not needed!</h4>
               <p style={{ margin: '0', color: '#155724', fontSize: '14px' }}>
+                <strong>You can skip this entire section if you don't need conditional logic.</strong><br/>
                 Instead of selecting individual questions, you can now select entire <strong>sections</strong> to show based on year conditions. 
                 This makes it much easier to manage large forms with many questions organized into sections.
                 <br/><strong>Example:</strong> Show "Employee Information" and "Performance Review" sections only to users who joined before 2023.
@@ -1737,7 +1910,7 @@ const FormBuilder = () => {
 
           {/* Role-Based Conditional Logic */}
           <div className="card">
-            <h2>👤 Role-Based Conditional Logic</h2>
+            <h2>👤 Role-Based Conditional Logic <span style={{ fontSize: '14px', fontWeight: 'normal', color: '#28a745', backgroundColor: '#d4edda', padding: '4px 8px', borderRadius: '4px' }}>✨ Optional</span></h2>
             <div style={{ 
               backgroundColor: '#e8f5e8', 
               padding: '15px', 
@@ -1745,8 +1918,9 @@ const FormBuilder = () => {
               marginBottom: '20px',
               border: '1px solid #c3e6cb'
             }}>
-              <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>🆕 Role-Based Section Logic!</h4>
+              <h4 style={{ margin: '0 0 10px 0', color: '#155724' }}>🆕 Optional Feature - Skip if not needed!</h4>
               <p style={{ margin: '0', color: '#155724', fontSize: '14px' }}>
+                <strong>You can skip this entire section if you don't need role-based logic.</strong><br/>
                 Show different sections based on the user's role selection (Employee, Team Lead, or Management). 
                 Users will first select their role, then only see sections relevant to their position.
                 <br/><strong>Example:</strong> Show "Performance Review" section only to Team Leads, "Task Management" section only to Employees, and "Strategic Planning" section only to Management.
