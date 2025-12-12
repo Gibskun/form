@@ -77,10 +77,22 @@ const FormFiller = () => {
         });
       }
       
-      // If there's no conditional logic, skip directly to step 3 (questions)
+      // Determine initial step based on which conditional logic exists
       if (!hasAnyConditionalLogic) {
         console.log('✅ No conditional logic detected, skipping to questions step');
         setCurrentStep(3);
+      } else if (!hasYearConditions && (hasRoleConditions || hasManagementLists)) {
+        // Only role-based logic exists, skip year selection
+        console.log('✅ Only role-based logic detected, starting at role selection step');
+        setCurrentStep(2);
+      } else if (hasYearConditions && !hasRoleConditions && !hasManagementLists) {
+        // Only year-based logic exists, start at year selection
+        console.log('✅ Only year-based logic detected, starting at year selection step');
+        setCurrentStep(1);
+      } else {
+        // Both year and role logic exist, start at year selection
+        console.log('✅ Both year and role logic detected, starting at year selection step');
+        setCurrentStep(1);
       }
     } catch (error) {
       setError(error.response?.data?.error || 'Form not found');
@@ -184,7 +196,18 @@ const FormFiller = () => {
       return;
     }
     setError('');
-    setCurrentStep(2);
+    
+    // Check if role-based logic exists
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+    const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+    
+    // If ONLY year-based logic exists (no role logic), skip to step 3
+    if (!hasRoleConditions && !hasManagementLists) {
+      setCurrentStep(3);
+    } else {
+      // Otherwise, show role selection
+      setCurrentStep(2);
+    }
   };
 
   const handleRoleChange = async (role) => {
@@ -388,12 +411,29 @@ const FormFiller = () => {
   };
 
   const handleBackToYear = () => {
-    setCurrentStep(1);
+    // Only go back to year if year-based logic exists
+    const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                              (form.conditional_sections && form.conditional_sections.length > 0);
+    if (hasYearConditions) {
+      setCurrentStep(1);
+    }
     setError('');
   };
 
   const handleBackToRole = () => {
-    setCurrentStep(2);
+    // Check which logic types exist to determine where to go back
+    const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                              (form.conditional_sections && form.conditional_sections.length > 0);
+    const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+    const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+    
+    if (hasYearConditions) {
+      // If year logic exists, go back to year step
+      setCurrentStep(1);
+    } else if (hasRoleConditions || hasManagementLists) {
+      // If only role logic exists, go back to role step
+      setCurrentStep(2);
+    }
     setError('');
   };
 
@@ -1314,6 +1354,25 @@ const FormFiller = () => {
                 return null; // Don't show progress bar if no conditional logic
               }
               
+              // Determine total steps and display step based on logic types
+              let totalSteps, displayStep;
+              if (hasYearConditions && (hasRoleConditions || hasManagementLists)) {
+                // Both year and role logic: 3 steps (Year -> Role -> Questions)
+                totalSteps = 3;
+                displayStep = currentStep;
+              } else if (!hasYearConditions && (hasRoleConditions || hasManagementLists)) {
+                // Only role logic: 2 steps (Role -> Questions), map step 2->1, step 3->2
+                totalSteps = 2;
+                displayStep = currentStep === 2 ? 1 : (currentStep === 3 ? 2 : currentStep);
+              } else if (hasYearConditions && !hasRoleConditions && !hasManagementLists) {
+                // Only year logic: 2 steps (Year -> Questions), map step 3->2
+                totalSteps = 2;
+                displayStep = currentStep === 3 ? 2 : currentStep;
+              } else {
+                totalSteps = 1;
+                displayStep = 1;
+              }
+              
               return (
                 <div style={{ 
                   marginBottom: '25px', 
@@ -1326,7 +1385,7 @@ const FormFiller = () => {
                   <div style={{ textAlign: 'center', marginBottom: '15px' }}>
                     <h4 style={{ margin: '0', color: '#495057' }}>Form Progress</h4>
                     <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#6c757d' }}>
-                      Step {currentStep} of 3
+                      Step {displayStep} of {totalSteps}
                     </p>
                   </div>
                   
@@ -1337,71 +1396,83 @@ const FormFiller = () => {
                   fontSize: '14px',
                   fontWeight: '600'
                 }}>
-                  {/* Step 1: Year Selection */}
-                  <div style={{ 
-                    display: 'flex', 
-                    alignItems: 'center',
-                    color: currentStep === 1 ? '#007bff' : '#28a745',
-                    transition: 'all 0.3s ease'
-                  }}>
-                    <div style={{
-                      width: '35px',
-                      height: '35px',
-                      borderRadius: '50%',
-                      backgroundColor: currentStep === 1 ? '#007bff' : '#28a745',
-                      color: 'white',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 'bold',
-                      marginRight: '10px',
-                      fontSize: '16px',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                      transition: 'all 0.3s ease'
-                    }}>
-                      {currentStep === 1 ? '1' : '✓'}
-                    </div>
-                    <span>Year</span>
-                  </div>
+                  {/* Only show Year step if year-based logic exists */}
+                  {hasYearConditions && (
+                    <>
+                      {/* Step 1: Year Selection */}
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center',
+                        color: currentStep === 1 ? '#007bff' : '#28a745',
+                        transition: 'all 0.3s ease'
+                      }}>
+                        <div style={{
+                          width: '35px',
+                          height: '35px',
+                          borderRadius: '50%',
+                          backgroundColor: currentStep === 1 ? '#007bff' : '#28a745',
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 'bold',
+                          marginRight: '10px',
+                          fontSize: '16px',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          transition: 'all 0.3s ease'
+                        }}>
+                          {currentStep === 1 ? '1' : '✓'}
+                        </div>
+                        <span>Year</span>
+                      </div>
+                    </>
+                  )}
                   
-                  {/* Connector 1 */}
-                  <div style={{ 
-                    width: '40px', 
-                    height: '3px', 
-                    backgroundColor: currentStep >= 2 ? '#28a745' : '#dee2e6',
-                    margin: '0 15px',
-                    borderRadius: '2px',
-                    transition: 'all 0.3s ease'
-                  }}></div>
-                  
-                  {/* Step 2: Role Selection */}
-                  <div style={{ 
-                    display: 'flex', 
-                    alignItems: 'center',
-                    color: currentStep === 2 ? '#007bff' : (currentStep > 2 ? '#28a745' : '#6c757d'),
-                    transition: 'all 0.3s ease'
-                  }}>
-                    <div style={{
-                      width: '35px',
-                      height: '35px',
-                      borderRadius: '50%',
-                      backgroundColor: currentStep === 2 ? '#007bff' : (currentStep > 2 ? '#28a745' : '#dee2e6'),
-                      color: currentStep >= 2 ? 'white' : '#6c757d',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 'bold',
-                      marginRight: '10px',
-                      fontSize: '16px',
-                      boxShadow: currentStep >= 2 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-                      transition: 'all 0.3s ease'
-                    }}>
-                      {currentStep === 2 ? '2' : (currentStep > 2 ? '✓' : '2')}
-                    </div>
-                    <span>Role</span>
-                  </div>
+                  {/* Only show Role step if role-based logic exists */}
+                  {(hasRoleConditions || hasManagementLists) && (
+                    <>
+                      {/* Connector - only show if year step exists */}
+                      {hasYearConditions && (
+                        <div style={{ 
+                          width: '40px', 
+                          height: '3px', 
+                          backgroundColor: currentStep >= 2 ? '#28a745' : '#dee2e6',
+                          margin: '0 15px',
+                          borderRadius: '2px',
+                          transition: 'all 0.3s ease'
+                        }}></div>
+                      )}
+                      
+                      {/* Step: Role Selection (number depends on if year step exists) */}
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center',
+                        color: currentStep === 2 ? '#007bff' : (currentStep > 2 ? '#28a745' : '#6c757d'),
+                        transition: 'all 0.3s ease'
+                      }}>
+                        <div style={{
+                          width: '35px',
+                          height: '35px',
+                          borderRadius: '50%',
+                          backgroundColor: currentStep === 2 ? '#007bff' : (currentStep > 2 ? '#28a745' : '#dee2e6'),
+                          color: currentStep >= 2 ? 'white' : '#6c757d',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 'bold',
+                          marginRight: '10px',
+                          fontSize: '16px',
+                          boxShadow: currentStep >= 2 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+                          transition: 'all 0.3s ease'
+                        }}>
+                          {currentStep === 2 ? (hasYearConditions ? '2' : '1') : (currentStep > 2 ? '✓' : (hasYearConditions ? '2' : '1'))}
+                        </div>
+                        <span>Role</span>
+                      </div>
+                    </>
+                  )}
 
-                  {/* Connector 2 */}
+                  {/* Connector to Questions */}
                   <div style={{ 
                     width: '40px', 
                     height: '3px', 
@@ -1411,7 +1482,7 @@ const FormFiller = () => {
                     transition: 'all 0.3s ease'
                   }}></div>
                   
-                  {/* Step 3: Form Questions */}
+                  {/* Step: Form Questions (number depends on which logic types exist) */}
                   <div style={{ 
                     display: 'flex', 
                     alignItems: 'center',
@@ -1433,7 +1504,7 @@ const FormFiller = () => {
                       boxShadow: currentStep === 3 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
                       transition: 'all 0.3s ease'
                     }}>
-                      3
+                      {hasYearConditions && (hasRoleConditions || hasManagementLists) ? '3' : '2'}
                     </div>
                     <span>Questions</span>
                   </div>
@@ -1659,18 +1730,28 @@ const FormFiller = () => {
                 </div>
                 
                 <div style={{ marginTop: '25px', textAlign: 'center' }}>
-                  <button
-                    type="button"
-                    onClick={handleBackToYear}
-                    className="btn btn-secondary"
-                    style={{
-                      padding: '12px 30px',
-                      fontSize: '16px',
-                      marginRight: '15px'
-                    }}
-                  >
-                    ← Back to Year
-                  </button>
+                  {(() => {
+                    // Only show back to year button if year logic exists
+                    const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                                              (form.conditional_sections && form.conditional_sections.length > 0);
+                    if (hasYearConditions) {
+                      return (
+                        <button
+                          type="button"
+                          onClick={handleBackToYear}
+                          className="btn btn-secondary"
+                          style={{
+                            padding: '12px 30px',
+                            fontSize: '16px',
+                            marginRight: '15px'
+                          }}
+                        >
+                          ← Back to Year
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
                   <button
                     type="button"
                     onClick={handleRoleNext}
@@ -1893,14 +1974,44 @@ const FormFiller = () => {
 
                           {/* Back Button */}
                           <div style={{ marginBottom: '20px' }}>
-                            <button
-                              type="button"
-                              onClick={handleBackToRole}
-                              className="btn btn-outline-secondary"
-                              style={{ fontSize: '14px' }}
-                            >
-                              ← Back to Role Selection
-                            </button>
+                            {(() => {
+                              const hasYearConditions = (form.conditional_questions && form.conditional_questions.length > 0) ||
+                                                        (form.conditional_sections && form.conditional_sections.length > 0);
+                              const hasRoleConditions = form.role_based_conditional_sections && form.role_based_conditional_sections.length > 0;
+                              const hasManagementLists = form.management_lists && form.management_lists.length > 0;
+                              
+                              // Determine back button label and action
+                              let backLabel = '';
+                              let backAction = null;
+                              
+                              if (hasYearConditions && (hasRoleConditions || hasManagementLists)) {
+                                // Both year and role logic exist - go back to role
+                                backLabel = '← Back to Role Selection';
+                                backAction = handleBackToRole;
+                              } else if (hasYearConditions) {
+                                // Only year logic - go back to year
+                                backLabel = '← Back to Year Selection';
+                                backAction = () => setCurrentStep(1);
+                              } else if (hasRoleConditions || hasManagementLists) {
+                                // Only role logic - go back to role
+                                backLabel = '← Back to Role Selection';
+                                backAction = () => setCurrentStep(2);
+                              }
+                              
+                              if (backAction) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={backAction}
+                                    className="btn btn-outline-secondary"
+                                    style={{ fontSize: '14px' }}
+                                  >
+                                    {backLabel}
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
                           </div>
                         </>
                       );
