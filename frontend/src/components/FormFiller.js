@@ -72,8 +72,8 @@ const FormFiller = () => {
         console.log('📝 Form does not require user info, skipping to questions');
         setShowQuestions(true);
         setUserInfo({
-          respondent_name: 'Anonymous',
-          respondent_email: 'anonymous@form.local'
+          respondent_name: '',
+          respondent_email: ''
         });
       }
       
