@@ -8,11 +8,24 @@ const ExcelJS = require('exceljs');
 const { pool, testConnection, initializeDatabase } = require('./database');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// Middleware
-app.use(cors());
+// Middleware - Comprehensive CORS Configuration
+app.use(cors({
+  origin: [
+    'http://31.97.111.215',
+    'http://31.97.111.215:8080',
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'http://localhost:5001'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 600
+}));
 app.use(express.json({ limit: '50mb' })); // Increased from default 100kb to 50mb for large form data
 app.use(express.urlencoded({ limit: '50mb', extended: true })); // Also handle URL encoded data
 
@@ -76,6 +89,63 @@ const requireSuperAdmin = (req, res, next) => {
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+
+    const result = await pool.query(
+      'SELECT * FROM users WHERE username = $1 AND (role = $2 OR role = $3)',
+      [username, 'admin', 'super_admin']
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = result.rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Auth login alias (supports frontend API calls) - handles both correct and nested data formats
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    // Handle both correct format and incorrectly nested format from frontend
+    let username, password;
+    
+    if (typeof req.body.username === 'object' && req.body.username !== null) {
+      // Frontend sometimes sends nested data: { username: { username: 'admin', password: 'admin123' } }
+      username = req.body.username.username;
+      password = req.body.username.password;
+      console.log('⚠️ Detected nested login data format, extracting credentials');
+    } else {
+      // Correct format: { username: 'admin', password: 'admin123' }
+      username = req.body.username;
+      password = req.body.password;
+    }
+
+    if (!username || !password) {
+      return res.status(401).json({ error: 'Username and password are required' });
+    }
 
     const result = await pool.query(
       'SELECT * FROM users WHERE username = $1 AND (role = $2 OR role = $3)',
