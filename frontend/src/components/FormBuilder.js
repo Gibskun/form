@@ -1,10 +1,12 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { adminAPI, superadminAPI } from '../utils/api';
 
 const FormBuilder = () => {
-  const { formId } = useParams(); // Get formId from URL if editing
+  const router = useRouter();
+  const { formId } = router.query; // Get formId from URL if editing
   const isEditMode = Boolean(formId);
   
   const [formData, setFormData] = useState({
@@ -29,7 +31,6 @@ const FormBuilder = () => {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [scaleOrderMode, setScaleOrderMode] = useState(false);
   const [assessmentQuestions, setAssessmentQuestions] = useState([]);
-  const navigate = useNavigate();
 
   // Check authentication on component mount
   useEffect(() => {
@@ -37,7 +38,7 @@ const FormBuilder = () => {
     const token = localStorage.getItem('adminToken');
     if (!token) {
       console.log('🔐 No token found, redirecting to login');
-      navigate('/admin');
+      router.push('/admin');
       return;
     }
     
@@ -49,7 +50,7 @@ const FormBuilder = () => {
       console.log('🆕 Create mode detected');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formId, isEditMode, navigate]);
+  }, [formId, isEditMode]);
 
   // Check if current user is superadmin
   useEffect(() => {
@@ -122,7 +123,7 @@ const FormBuilder = () => {
         console.log('🔐 Unauthorized, redirecting to login');
         localStorage.removeItem('adminToken');
         localStorage.removeItem('adminUser');
-        navigate('/admin');
+        router.push('/admin');
       }
     } finally {
       setLoadingForm(false);
@@ -630,7 +631,7 @@ const FormBuilder = () => {
         console.log('🆕 Creating new form...');
         const response = await adminAPI.createForm(cleanedPayload);
         console.log('✅ Form created successfully:', response.data);
-        navigate('/admin/dashboard');
+        router.push('/admin/dashboard');
       }
     } catch (error) {
       console.error('❌ Form submission error:', error);
@@ -716,7 +717,7 @@ const FormBuilder = () => {
         <nav className="nav">
           <h1>{isEditMode ? 'Edit Form' : 'Create New Form'}</h1>
           <div className="nav-links">
-            <Link to="/admin/dashboard" className="nav-link">Back to Dashboard</Link>
+            <Link href="/admin/dashboard" className="nav-link">Back to Dashboard</Link>
           </div>
         </nav>
       </header>
@@ -2329,7 +2330,7 @@ const FormBuilder = () => {
                 : (isEditMode ? 'Update Form' : 'Create Form')
               }
             </button>
-            <Link to="/admin/dashboard" className="btn btn-secondary">
+            <Link href="/admin/dashboard" className="btn btn-secondary">
               Cancel
             </Link>
           </div>

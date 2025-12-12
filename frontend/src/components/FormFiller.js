@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useRouter } from 'next/router';
 import { formAPI } from '../utils/api';
 
 const FormFiller = () => {
-  const { uniqueLink } = useParams();
+  const router = useRouter();
+  const { uniqueLink } = router.query;
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -40,7 +41,9 @@ const FormFiller = () => {
 
 
   useEffect(() => {
-    fetchForm();
+    if (uniqueLink) {
+      fetchForm();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uniqueLink]);
 

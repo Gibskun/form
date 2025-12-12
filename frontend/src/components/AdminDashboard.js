@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { adminAPI } from '../utils/api';
 import CopyLinkButton from './CopyLinkButton';
 import SuperadminPasswordChange from './SuperadminPasswordChange';
@@ -10,13 +11,13 @@ const AdminDashboard = () => {
   const [error, setError] = useState('');
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
-  const navigate = useNavigate();
+  const router = useRouter();
 
   useEffect(() => {
     // Check if user is authenticated
     const token = localStorage.getItem('adminToken');
     if (!token) {
-      navigate('/admin');
+      router.push('/admin');
       return;
     }
 
@@ -33,7 +34,7 @@ const AdminDashboard = () => {
 
     fetchForms();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate]);
+  }, []);
 
   const fetchForms = async () => {
     try {
@@ -44,7 +45,7 @@ const AdminDashboard = () => {
       if (error.response?.status === 401) {
         localStorage.removeItem('adminToken');
         localStorage.removeItem('adminUser');
-        navigate('/admin');
+        router.push('/admin');
       }
     } finally {
       setLoading(false);
@@ -54,7 +55,7 @@ const AdminDashboard = () => {
   const handleLogout = () => {
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
-    navigate('/admin');
+    router.push('/admin');
   };
 
   const handleDeleteForm = async (formId) => {
@@ -110,7 +111,7 @@ const AdminDashboard = () => {
             )}
           </h1>
           <div className="nav-links">
-            <Link to="/admin/create-form" className="nav-link">Create New Form</Link>
+            <Link href="/admin/create-form" className="nav-link">Create New Form</Link>
             {isSuperAdmin && (
               <button 
                 onClick={() => setShowPasswordChange(true)} 
@@ -137,7 +138,7 @@ const AdminDashboard = () => {
           {forms.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px' }}>
               <p>No forms created yet.</p>
-              <Link to="/admin/create-form" className="btn btn-primary">Create Your First Form</Link>
+              <Link href="/admin/create-form" className="btn btn-primary">Create Your First Form</Link>
             </div>
           ) : (
             <table className="table">
@@ -178,7 +179,7 @@ const AdminDashboard = () => {
                       {form.response_count > 0 && (
                         <div>
                           <Link
-                            to={`/admin/forms/${form.id}/responses`}
+                            href={`/admin/forms/${form.id}/responses`}
                             style={{ fontSize: '12px', color: '#007bff' }}
                           >
                             View Details
@@ -201,7 +202,7 @@ const AdminDashboard = () => {
                     <td>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <Link
-                          to={`/admin/edit-form/${form.id}`}
+                          href={`/admin/edit-form/${form.id}`}
                           className="btn btn-primary"
                           style={{ fontSize: '12px', padding: '5px 10px', textDecoration: 'none' }}
                         >

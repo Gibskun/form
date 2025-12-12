@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { adminAPI } from '../utils/api';
 
 const FormResponses = () => {
-  const { formId } = useParams();
-  const navigate = useNavigate();
+  const router = useRouter();
+  const { formId } = router.query;
   const [responses, setResponses] = useState([]);
   const [filteredResponses, setFilteredResponses] = useState([]);
   const [form, setForm] = useState(null);
@@ -21,12 +22,14 @@ const FormResponses = () => {
     // Check if user is authenticated
     const token = localStorage.getItem('adminToken');
     if (!token) {
-      navigate('/admin');
+      router.push('/admin');
       return;
     }
 
-    fetchResponses();
-  }, [formId, navigate]);
+    if (formId) {
+      fetchResponses();
+    }
+  }, [formId]);
 
   // Filter responses when filter criteria change
   useEffect(() => {
@@ -113,7 +116,7 @@ const FormResponses = () => {
       if (error.response?.status === 401) {
         localStorage.removeItem('adminToken');
         localStorage.removeItem('adminUser');
-        navigate('/admin');
+        router.push('/admin');
       }
     } finally {
       setLoading(false);
@@ -252,7 +255,7 @@ const FormResponses = () => {
         <nav className="nav">
           <h1>Form Responses: {form?.title}</h1>
           <div className="nav-links">
-            <Link to="/admin/dashboard" className="nav-link">Back to Dashboard</Link>
+            <Link href="/admin/dashboard" className="nav-link">Back to Dashboard</Link>
           </div>
         </nav>
       </header>

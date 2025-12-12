@@ -1,0 +1,463 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  body {
+    @apply font-sap text-sap-base text-sap-text-primary bg-sap-bg-base m-0 p-0 leading-normal;
+  }
+
+  .App {
+    @apply min-h-screen flex flex-col;
+  }
+}
+
+@layer components {
+  /* Header */
+  .header {
+    @apply bg-sap-shell-bg text-sap-text-inverted p-0 m-0 shadow-sap-sm sticky top-0 z-[100];
+  }
+
+  .header h1 {
+    @apply m-0 text-sap-lg font-normal;
+  }
+
+  .nav {
+    @apply flex justify-between items-center max-w-full m-0 px-sap-xl py-sap-md h-11;
+  }
+
+  .nav-links {
+    @apply flex gap-1 items-center;
+  }
+
+  .nav-link {
+    @apply text-sap-text-inverted no-underline px-sap-md py-sap-sm rounded-sap-sm transition-all duration-200 text-sap-base font-normal flex items-center h-8;
+  }
+
+  .nav-link:hover {
+    @apply bg-sap-shell-hover;
+  }
+
+  .nav-link:active {
+    @apply bg-white/15;
+  }
+
+  /* Container */
+  .container {
+    @apply max-w-7xl mx-auto px-sap-xl flex-1;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-sap-bg-card rounded-sap-md shadow-sap-md px-sap-xl py-sap-xl my-sap-lg border border-sap-neutral-border;
+  }
+
+  .card-header {
+    @apply pb-sap-md border-b border-sap-neutral-border mb-sap-lg;
+  }
+
+  .card-title {
+    @apply text-sap-xl font-light text-sap-text-primary m-0 mb-sap-sm;
+  }
+
+  .card-subtitle {
+    @apply text-sap-base text-sap-text-secondary m-0;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply font-sap text-sap-base px-4 py-2 border border-transparent rounded-sap-sm cursor-pointer transition-all duration-100 no-underline inline-flex items-center justify-center gap-sap-sm font-normal min-h-[2.25rem] leading-[1.125rem] text-center select-none;
+  }
+
+  .btn:focus {
+    @apply outline outline-2 outline-sap-brand-primary outline-offset-1;
+  }
+
+  .btn:disabled {
+    @apply opacity-40 cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply bg-sap-brand-primary text-sap-text-inverted border-sap-brand-primary;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    @apply bg-sap-brand-primary-hover border-sap-brand-primary-hover;
+  }
+
+  .btn-primary:active:not(:disabled) {
+    @apply bg-sap-brand-primary-active border-sap-brand-primary-active;
+  }
+
+  .btn-success {
+    @apply bg-sap-positive text-sap-text-inverted border-sap-positive;
+  }
+
+  .btn-success:hover:not(:disabled) {
+    @apply bg-sap-positive-hover border-sap-positive-hover;
+  }
+
+  .btn-danger {
+    @apply bg-sap-negative text-sap-text-inverted border-sap-negative;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    @apply bg-sap-negative-hover border-sap-negative-hover;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent text-sap-brand-primary border-sap-brand-primary;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    @apply bg-sap-neutral-hover;
+  }
+
+  .btn-outline-secondary {
+    @apply bg-transparent text-sap-text-secondary border-sap-neutral-border;
+  }
+
+  .btn-outline-secondary:hover:not(:disabled) {
+    @apply bg-sap-neutral-hover border-sap-text-secondary text-sap-text-primary;
+  }
+
+  .btn-sm {
+    @apply text-xs px-2.5 py-1.5 min-h-[1.75rem];
+  }
+
+  .btn-outline-primary {
+    @apply bg-transparent text-sap-brand-primary border-sap-brand-primary;
+  }
+
+  .btn-outline-primary:hover:not(:disabled) {
+    @apply bg-sap-brand-primary/10;
+  }
+
+  .btn-outline-danger {
+    @apply bg-transparent text-sap-negative border-sap-negative;
+  }
+
+  .btn-outline-danger:hover:not(:disabled) {
+    @apply bg-sap-negative/10;
+  }
+
+  .btn-warning {
+    @apply bg-sap-critical text-sap-text-inverted border-sap-critical;
+  }
+
+  .btn-warning:hover:not(:disabled) {
+    @apply bg-sap-critical-hover border-sap-critical-hover;
+  }
+
+  /* Form Controls */
+  .form-group {
+    @apply mb-sap-lg text-left;
+  }
+
+  .form-label {
+    @apply block mb-sap-sm text-sap-base font-normal text-sap-text-primary leading-[1.4];
+  }
+
+  .form-label-required::after {
+    @apply content-['_*'] text-sap-negative;
+  }
+
+  .form-input,
+  .form-textarea,
+  .form-select {
+    @apply w-full font-sap text-sap-base px-2.5 py-[0.5625rem] border border-sap-neutral-border rounded-sap-sm bg-sap-bg-field text-sap-text-primary transition-all duration-100 leading-[1.4];
+  }
+
+  .form-input:hover,
+  .form-textarea:hover,
+  .form-select:hover {
+    @apply border-sap-brand-primary;
+  }
+
+  .form-input:focus,
+  .form-textarea:focus,
+  .form-select:focus {
+    @apply outline outline-2 outline-sap-brand-primary outline-offset-0 border-sap-brand-primary bg-sap-neutral-bg;
+  }
+
+  .form-input:disabled,
+  .form-textarea:disabled,
+  .form-select:disabled {
+    @apply bg-sap-neutral-hover border-sap-neutral-border text-sap-text-tertiary cursor-not-allowed;
+  }
+
+  .form-textarea {
+    @apply min-h-20 resize-y;
+  }
+
+  .form-select {
+    @apply appearance-none bg-[url("data:image/svg+xml,%3Csvg%20width='10'%20height='5'%20xmlns='http://www.w3.org/2000/svg'%3E%3Cpath%20d='M0%200l5%205%205-5z'%20fill='%2332363a'/%3E%3C/svg%3E")] bg-no-repeat bg-[right_0.75rem_center] bg-[length:0.625rem] pr-8;
+  }
+
+  /* Messages */
+  .error,
+  .success,
+  .warning,
+  .info {
+    @apply p-sap-md rounded-sap-sm my-sap-md text-sap-base border-l-4 flex items-start gap-sap-sm;
+  }
+
+  .error {
+    @apply bg-[#fff4f4] text-sap-negative border-sap-negative;
+  }
+
+  .success {
+    @apply bg-[#f1fdf6] text-sap-positive border-sap-positive;
+  }
+
+  .warning {
+    @apply bg-[#fef7f1] text-sap-critical border-sap-critical;
+  }
+
+  .info {
+    @apply bg-[#f5faff] text-sap-informative border-sap-informative;
+  }
+
+  /* Tables */
+  .table {
+    @apply w-full border-collapse my-sap-lg bg-sap-bg-card border border-sap-neutral-border rounded-sap-md overflow-hidden;
+  }
+
+  .table th,
+  .table td {
+    @apply p-sap-md text-left border-b border-sap-neutral-border text-sap-base;
+  }
+
+  .table th {
+    @apply bg-sap-bg-base font-semibold text-sap-text-primary normal-case tracking-normal;
+  }
+
+  .table tbody tr {
+    @apply transition-colors duration-100;
+  }
+
+  .table tbody tr:hover {
+    @apply bg-sap-neutral-hover;
+  }
+
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* Loading */
+  .loading {
+    @apply text-center p-sap-xl text-sap-text-secondary text-sap-md;
+  }
+
+  .loading::before {
+    content: '';
+    @apply inline-block w-8 h-8 border-[0.1875rem] border-sap-neutral-border border-t-sap-brand-primary rounded-full animate-spin mb-sap-md;
+  }
+
+  /* Question Builder */
+  .question-builder {
+    @apply border border-sap-neutral-border rounded-sap-md p-sap-lg my-sap-lg bg-sap-bg-card shadow-sap-sm;
+  }
+
+  .question-header {
+    @apply flex justify-between items-center mb-sap-md pb-sap-md border-b border-sap-neutral-border;
+  }
+
+  .question-number {
+    @apply bg-gradient-to-br from-sap-brand-primary to-sap-brand-primary-hover text-sap-text-inverted rounded-full w-8 h-8 flex items-center justify-center font-semibold text-sap-sm mr-sap-md shadow-sap-sm;
+  }
+
+  .remove-question {
+    @apply bg-none border-none text-sap-negative cursor-pointer text-lg p-sap-sm rounded-sap-sm transition-all duration-100;
+  }
+
+  .remove-question:hover {
+    @apply bg-[#fff4f4];
+  }
+
+  .options-list {
+    @apply mt-sap-md;
+  }
+
+  .option-item {
+    @apply flex items-center mb-sap-sm gap-sap-sm;
+  }
+
+  .option-item input {
+    @apply flex-1;
+  }
+
+  /* Rating & Assessment */
+  .rating-scale {
+    @apply flex items-center justify-center gap-sap-md my-sap-lg p-sap-lg bg-sap-bg-base rounded-sap-md;
+  }
+
+  .rating-option {
+    @apply flex flex-col items-center gap-sap-sm p-sap-md rounded-sap-sm transition-all duration-100 cursor-pointer;
+  }
+
+  .rating-option:hover {
+    @apply bg-sap-neutral-hover;
+  }
+
+  .rating-option input[type="radio"] {
+    @apply m-0 w-[1.125rem] h-[1.125rem] cursor-pointer accent-sap-brand-primary;
+  }
+
+  /* Form Sections */
+  .form-section {
+    @apply mb-sap-xl pb-sap-lg border-b border-sap-neutral-border;
+  }
+
+  .form-section:last-child {
+    @apply border-b-0;
+  }
+
+  .conditional-section {
+    @apply bg-[#f5faff] border border-sap-brand-primary rounded-sap-md border-l-4 p-sap-lg my-sap-lg;
+  }
+
+  .conditional-header {
+    @apply font-semibold text-sap-brand-primary mb-sap-md text-sap-md;
+  }
+
+  /* Assessment Form */
+  .assessment-container {
+    @apply flex items-center justify-between gap-sap-xl min-h-20 p-sap-lg bg-sap-bg-base rounded-sap-md border border-sap-neutral-border;
+  }
+
+  .assessment-statement {
+    @apply flex-1 text-sap-base text-sap-text-primary;
+  }
+
+  .assessment-statement-left {
+    @apply text-left pr-sap-md;
+  }
+
+  .assessment-statement-right {
+    @apply text-right pl-sap-md;
+  }
+
+  .assessment-rating-container {
+    @apply flex items-center justify-center gap-sap-md px-sap-lg min-w-[15rem];
+  }
+
+  .assessment-rating-item {
+    @apply flex flex-col items-center gap-sap-sm p-sap-md rounded-sap-sm transition-all duration-100 border-2 border-transparent cursor-pointer;
+  }
+
+  .assessment-rating-item:hover {
+    @apply bg-sap-neutral-hover border-sap-neutral-border;
+  }
+
+  .assessment-rating-item:has(input:checked) {
+    @apply bg-[#e5f0ff] border-sap-brand-primary;
+  }
+
+  .assessment-rating-input {
+    @apply m-0 w-5 h-5 cursor-pointer accent-sap-brand-primary;
+  }
+
+  .assessment-rating-label {
+    @apply text-sap-md font-semibold text-sap-brand-primary cursor-pointer select-none;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    @apply fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] animate-[fadeIn_0.15s_ease-out];
+  }
+
+  .modal-content {
+    @apply bg-sap-bg-card p-0 rounded-sap-md shadow-sap-lg max-w-[90vw] max-h-[90vh] overflow-hidden animate-[slideIn_0.2s_ease-out] flex flex-col;
+  }
+
+  .modal-header {
+    @apply px-sap-xl py-sap-lg border-b border-sap-neutral-border bg-sap-bg-base;
+  }
+
+  .modal-body {
+    @apply p-sap-xl overflow-y-auto flex-1;
+  }
+
+  .modal-footer {
+    @apply px-sap-xl py-sap-lg border-t border-sap-neutral-border bg-sap-bg-base flex justify-end gap-sap-sm;
+  }
+
+  /* Section Navigation */
+  .section-progress {
+    @apply bg-gradient-to-br from-sap-brand-primary to-sap-brand-primary-hover text-sap-text-inverted p-sap-xl rounded-sap-md mb-sap-xl shadow-sap-md;
+  }
+
+  .section-progress h4 {
+    @apply m-0 mb-sap-md text-sap-lg font-normal;
+  }
+
+  .section-progress-bar {
+    @apply w-full h-2 bg-white/30 rounded-sap-sm overflow-hidden mb-sap-md;
+  }
+
+  .section-progress-fill {
+    @apply h-full bg-sap-text-inverted transition-[width] duration-300 rounded-sap-sm;
+  }
+
+  .section-header {
+    @apply bg-sap-bg-base p-sap-xl rounded-sap-md mb-sap-lg border-l-4 border-sap-brand-primary shadow-sap-sm;
+  }
+
+  .section-header h3 {
+    @apply m-0 mb-sap-sm text-sap-lg font-normal text-sap-text-primary;
+  }
+
+  .section-header p {
+    @apply m-0 text-sap-text-secondary text-sap-base;
+  }
+
+  .section-question {
+    @apply mb-sap-xl p-sap-xl border border-sap-neutral-border rounded-sap-md bg-sap-bg-card transition-all duration-100 relative;
+  }
+
+  .section-question:hover {
+    @apply border-sap-brand-primary shadow-sap-sm;
+  }
+
+  .section-question::before {
+    content: '';
+    @apply absolute left-0 top-0 bottom-0 w-1 bg-sap-brand-primary rounded-sap-sm opacity-0 transition-opacity duration-100;
+  }
+
+  .section-question:hover::before {
+    @apply opacity-100;
+  }
+
+  .section-navigation {
+    @apply flex justify-between items-center mt-sap-xl p-sap-lg bg-sap-bg-base rounded-sap-md border border-sap-neutral-border;
+  }
+
+  .question-item {
+    @apply mb-6 p-5 border-2 border-gray-200 rounded-lg bg-white;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(-1rem) scale(0.98); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0) scale(1); 
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
