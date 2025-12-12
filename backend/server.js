@@ -932,7 +932,7 @@ app.post('/api/form/:uniqueLink/submit', async (req, res) => {
 
     // Use provided name/email or default to anonymous if not required
     const finalRespondentName = respondent_name || (requireUserInfo ? null : 'Anonymous');
-    const finalRespondentEmail = respondent_email || (requireUserInfo ? null : `anonymous_${Date.now()}@form.local`);
+    const finalRespondentEmail = respondent_email || (requireUserInfo ? null : `anonymous_${uuidv4()}@form.local`);
 
     // Validate user info if required
     if (requireUserInfo && (!finalRespondentName || !finalRespondentEmail)) {
